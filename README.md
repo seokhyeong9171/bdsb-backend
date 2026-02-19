@@ -1,6 +1,9 @@
 # 밥드실분 (BDSB) Backend
 
-### 해당 프로젝트는 기존의 Spring project로 진행되었던 '밥드실분'을 Claude pro를 이용한 바이브 코딩으로 제작한 프로젝트입니다 
+### 해당 프로젝트는 기존의 Spring project로 진행되었던 '밥드실분'을 Claude pro를 이용한 바이브 코딩으로 제작한 프로젝트입니다
+
+### [기존 프로젝트 Notion](https://chaen-notio.notion.site/29c9baa2ab4141bab4855cdb634fe565)
+### [기존 프로젝트 Repository](https://github.com/BabDeuSilBun/backend.git)
 
 ## 프로젝트 개요
 
@@ -55,76 +58,6 @@ src/
 └── utils/
     ├── response.js                 # success()/error() 응답 헬퍼
     └── nickname.js                 # 랜덤 닉네임 생성 (음식 테마)
-```
-
-## 핵심 패턴과 규칙
-
-### 1. DB 연결 패턴 (모든 컨트롤러 공통)
-
-```js
-let conn;
-try {
-  conn = await pool.getConnection();
-  // 쿼리 실행
-  return success(res, data, '메시지');
-} catch (err) {
-  console.error('설명:', err);
-  return error(res, '에러 메시지');
-} finally {
-  if (conn) conn.release();  // 반드시 finally에서 release
-}
-```
-
-- `pool`은 `src/config/db.js`에서 import
-- 여러 쿼리가 묶여야 할 때: `conn.beginTransaction()` → `conn.commit()` / `conn.rollback()`
-- **conn.release()는 반드시 finally 블록에서 호출** — 누락 시 커넥션 누수 발생
-
-### 2. 응답 형식
-
-```js
-const { success, error } = require('../utils/response');
-
-success(res, data, '성공 메시지', 200);   // { success: true, message, data }
-error(res, '에러 메시지', 400, errors);    // { success: false, message, errors? }
-```
-
-- 모든 컨트롤러에서 `res.json()` 직접 호출하지 않고 반드시 이 헬퍼 사용
-
-### 3. 인증/권한
-
-```js
-const { authenticate, authorize } = require('../middleware/auth');
-
-// JWT 토큰 검증 → req.user = { id, email, role, nickname }
-router.get('/me', authenticate, handler);
-
-// 역할 기반 접근 제어
-router.post('/', authenticate, authorize('business'), handler);
-router.use(authenticate, authorize('admin'));  // 라우터 전체 적용
-```
-
-- JWT payload: `{ id, email, role, nickname }`
-- 사용자 역할: `user`, `business`, `rider`, `admin`
-- 토큰 형식: `Authorization: Bearer <token>`
-
-### 4. Validation 패턴
-
-```js
-const { body } = require('express-validator');
-const validate = require('../middleware/validate');
-
-router.post('/', [
-  body('email').isEmail().withMessage('유효한 이메일을 입력하세요.'),
-  body('password').isLength({ min: 6 }).withMessage('비밀번호는 최소 6자 이상이어야 합니다.'),
-], validate, controller.handler);
-```
-
-### 5. 소유권 확인 패턴 (사업자 가게/메뉴)
-
-```js
-const [store] = await conn.query('SELECT owner_id FROM stores WHERE id = ?', [req.params.id]);
-if (!store) return error(res, '가게를 찾을 수 없습니다.', 404);
-if (store.owner_id !== req.user.id) return error(res, '권한이 없습니다.', 403);
 ```
 
 ## 데이터베이스 (MariaDB)
