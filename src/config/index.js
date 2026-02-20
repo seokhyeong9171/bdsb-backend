@@ -15,6 +15,7 @@ const envSchema = z.object({
   UPLOAD_DIR: z.string().default('uploads'),
   MAX_FILE_SIZE: z.coerce.number().default(5 * 1024 * 1024),
   DB_SSL: z.enum(['true', 'false']).default('false'),
+  CORS_ORIGIN: z.string().optional(),
 });
 
 const env = envSchema.parse(process.env);
@@ -45,4 +46,5 @@ module.exports = {
     dir: env.UPLOAD_DIR,
     maxFileSize: env.MAX_FILE_SIZE,
   },
+  corsOrigin: env.CORS_ORIGIN,
 };
