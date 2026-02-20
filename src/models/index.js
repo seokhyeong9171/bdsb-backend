@@ -9,6 +9,9 @@ const sequelize = new Sequelize(config.db.database, config.db.user, config.db.pa
   logging: config.nodeEnv === 'development' ? (msg) => logger.debug(msg) : false,
   dialectOptions: {
     allowPublicKeyRetrieval: true,
+    ...(config.db.ssl && {
+      ssl: { rejectUnauthorized: false },
+    }),
   },
   pool: {
     max: 10,
@@ -22,11 +25,6 @@ const sequelize = new Sequelize(config.db.database, config.db.user, config.db.pa
     underscored: true, // camelCase → snake_case 자동 변환
     timestamps: true,
   },
-  ...(config.db.ssl && {
-    dialectOptions: {
-      ssl: { rejectUnauthorized: false },
-    },
-  }),
 });
 
 // ── 모델 import ──
