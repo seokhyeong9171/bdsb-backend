@@ -19,6 +19,8 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
             cd /home/ubuntu/bdsb-backend
-            git pull origin master
+            git fetch origin
+            git checkout master
+            git reset --hard origin/master
             npm install --production
             pm2 reload bdsb-backend --update-env
