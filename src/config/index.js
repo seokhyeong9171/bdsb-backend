@@ -14,6 +14,7 @@ const envSchema = z.object({
   JWT_REFRESH_EXPIRES_IN: z.string().default('30d'),
   UPLOAD_DIR: z.string().default('uploads'),
   MAX_FILE_SIZE: z.coerce.number().default(5 * 1024 * 1024),
+  DB_SSL: z.enum(['true', 'false']).default('false'),
   CORS_ORIGIN: z.string().optional(),
 });
 
@@ -34,6 +35,7 @@ module.exports = {
     user: env.DB_USER,
     password: env.DB_PASSWORD,
     database: env.DB_NAME,
+    ssl: env.DB_SSL === 'true',
   },
   jwt: {
     secret: env.JWT_SECRET,
