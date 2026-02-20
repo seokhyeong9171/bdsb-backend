@@ -14,6 +14,7 @@ const envSchema = z.object({
   JWT_REFRESH_EXPIRES_IN: z.string().default('30d'),
   UPLOAD_DIR: z.string().default('uploads'),
   MAX_FILE_SIZE: z.coerce.number().default(5 * 1024 * 1024),
+  CORS_ORIGIN: z.string().optional(),
 });
 
 const env = envSchema.parse(process.env);
@@ -43,4 +44,5 @@ module.exports = {
     dir: env.UPLOAD_DIR,
     maxFileSize: env.MAX_FILE_SIZE,
   },
+  corsOrigin: env.CORS_ORIGIN,
 };
