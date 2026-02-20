@@ -9,9 +9,9 @@ async function initDatabase() {
     user: config.db.user,
     password: config.db.password,
     allowPublicKeyRetrieval: true,
-    // ...(config.db.ssl && {
+    ...(config.db.ssl && {
       ssl: { rejectUnauthorized: false },
-    // }),
+    }),
   });
 
   await conn.query(`CREATE DATABASE IF NOT EXISTS \`${config.db.database}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
