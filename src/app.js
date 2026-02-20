@@ -8,7 +8,7 @@ const rateLimit = require('express-rate-limit');
 const { Server } = require('socket.io');
 const jwt = require('jsonwebtoken');
 const config = require('./config');
-const pool = require('./config/db');
+const { sequelize, ChatMessage } = require('./models');
 const logger = require('./utils/logger');
 const { startMeetingScheduler } = require('./scheduler/meetingScheduler');
 const sanitize = require('./middleware/sanitize');
@@ -71,18 +71,11 @@ app.use('/api/images', require('./routes/images'));
 app.use('/api/notifications', require('./routes/notifications'));
 app.use('/api/admin', require('./routes/admin'));
 
-// ── DB 커넥션 풀 모니터링 ──
-let activeConnections = 0;
-pool.on('acquire', () => { activeConnections++; });
-pool.on('release', () => { activeConnections--; });
-
 // ── 헬스 체크 ──
 app.get('/api/health', async (req, res) => {
   let dbStatus = 'disconnected';
   try {
-    const conn = await pool.getConnection();
-    await conn.query('SELECT 1');
-    conn.release();
+    await sequelize.authenticate();
     dbStatus = 'connected';
   } catch (err) {
     dbStatus = 'error';
@@ -94,11 +87,7 @@ app.get('/api/health', async (req, res) => {
     status: {
       uptime: Math.floor(process.uptime()),
       environment: config.nodeEnv,
-      db: {
-        status: dbStatus,
-        activeConnections,
-        connectionLimit: 10,
-      },
+      db: { status: dbStatus },
     },
   });
 });
@@ -150,29 +139,24 @@ io.on('connection', (socket) => {
 
   // 메시지 전송
   socket.on('send_message', async ({ roomId, message }) => {
-    let conn;
     try {
-      conn = await pool.getConnection();
-      const result = await conn.query(
-        'INSERT INTO chat_messages (room_id, sender_id, message) VALUES (?, ?, ?)',
-        [roomId, socket.user.id, message]
-      );
+      const chatMessage = await ChatMessage.create({
+        roomId, senderId: socket.user.id, message,
+      });
 
       const messageData = {
-        id: Number(result.insertId),
+        id: chatMessage.id,
         room_id: roomId,
         sender_id: socket.user.id,
         nickname: socket.user.nickname,
         message,
-        created_at: new Date().toISOString(),
+        created_at: chatMessage.createdAt,
       };
 
       io.to(`room_${roomId}`).emit('new_message', messageData);
     } catch (err) {
       logger.error('소켓 메시지 전송 오류:', { error: err.message });
       socket.emit('error', { message: '메시지 전송에 실패했습니다.' });
-    } finally {
-      if (conn) conn.release();
     }
   });
 
