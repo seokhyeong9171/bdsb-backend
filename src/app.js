@@ -16,9 +16,14 @@ const sanitize = require('./middleware/sanitize');
 const app = express();
 const server = http.createServer(app);
 
+// CORS 허용 origin 목록
+const allowedOrigins = config.corsOrigin
+  ? config.corsOrigin.split(',').map((s) => s.trim())
+  : ['*'];
+
 // Socket.IO 설정
 const io = new Server(server, {
-  cors: { origin: '*', methods: ['GET', 'POST'] },
+  cors: { origin: allowedOrigins, methods: ['GET', 'POST'] },
 });
 
 // io 인스턴스를 다른 모듈에서 사용할 수 있도록 app에 저장
@@ -49,7 +54,7 @@ app.use('/api/auth/login', authLimiter);
 app.use('/api/auth/register', authLimiter);
 
 // ── 일반 미들웨어 ──
-app.use(cors());
+app.use(cors({ origin: allowedOrigins }));
 app.use(morgan('dev', {
   stream: { write: (message) => logger.info(message.trim()) },
 }));
