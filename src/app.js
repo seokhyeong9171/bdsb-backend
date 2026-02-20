@@ -29,8 +29,11 @@ const io = new Server(server, {
 // io 인스턴스를 다른 모듈에서 사용할 수 있도록 app에 저장
 app.set('io', io);
 
+// ── CORS 미들웨어 (helmet·rate limiter 보다 먼저 적용) ──
+app.use(cors({ origin: allowedOrigins, credentials: true }));
+
 // ── 보안 미들웨어 ──
-app.use(helmet());
+app.use(helmet({ crossOriginResourcePolicy: false }));
 
 // 전체 API Rate Limiting (분당 100회)
 const apiLimiter = rateLimit({
@@ -39,6 +42,7 @@ const apiLimiter = rateLimit({
   message: { success: false, message: '요청이 너무 많습니다. 잠시 후 다시 시도하세요.' },
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => req.method === 'OPTIONS', // preflight는 rate limit 제외
 });
 app.use('/api', apiLimiter);
 
@@ -49,12 +53,12 @@ const authLimiter = rateLimit({
   message: { success: false, message: '로그인 시도가 너무 많습니다. 15분 후 다시 시도하세요.' },
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => req.method === 'OPTIONS', // preflight는 rate limit 제외
 });
 app.use('/api/auth/login', authLimiter);
 app.use('/api/auth/register', authLimiter);
 
 // ── 일반 미들웨어 ──
-app.use(cors({ origin: allowedOrigins }));
 app.use(morgan('dev', {
   stream: { write: (message) => logger.info(message.trim()) },
 }));
