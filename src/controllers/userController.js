@@ -1,6 +1,7 @@
 const bcrypt = require('bcryptjs');
 const pool = require('../config/db');
 const { success, error } = require('../utils/response');
+const logger = require('../utils/logger');
 
 // 내 정보 조회
 exports.getProfile = async (req, res) => {
@@ -35,7 +36,7 @@ exports.getProfile = async (req, res) => {
       badges: badges || [],
     });
   } catch (err) {
-    console.error('프로필 조회 오류:', err);
+    logger.error('프로필 조회 오류:', { error: err.message, stack: err.stack });
     return error(res, '프로필 조회 중 오류가 발생했습니다.');
   } finally {
     if (conn) conn.release();
@@ -71,7 +72,7 @@ exports.getUserInfo = async (req, res) => {
       badges: badges || [],
     });
   } catch (err) {
-    console.error('유저 정보 조회 오류:', err);
+    logger.error('유저 정보 조회 오류:', { error: err.message, stack: err.stack });
     return error(res, '유저 정보 조회 중 오류가 발생했습니다.');
   } finally {
     if (conn) conn.release();
@@ -102,7 +103,7 @@ exports.updateProfile = async (req, res) => {
 
     return success(res, null, '프로필이 수정되었습니다.');
   } catch (err) {
-    console.error('프로필 수정 오류:', err);
+    logger.error('프로필 수정 오류:', { error: err.message, stack: err.stack });
     return error(res, '프로필 수정 중 오류가 발생했습니다.');
   } finally {
     if (conn) conn.release();
@@ -139,7 +140,7 @@ exports.deleteAccount = async (req, res) => {
     await conn.query('DELETE FROM users WHERE id = ?', [req.user.id]);
     return success(res, null, '회원 탈퇴가 완료되었습니다.');
   } catch (err) {
-    console.error('회원 탈퇴 오류:', err);
+    logger.error('회원 탈퇴 오류:', { error: err.message, stack: err.stack });
     return error(res, '회원 탈퇴 중 오류가 발생했습니다.');
   } finally {
     if (conn) conn.release();
@@ -171,7 +172,7 @@ exports.getOrderHistory = async (req, res) => {
 
     return success(res, orders);
   } catch (err) {
-    console.error('주문 내역 조회 오류:', err);
+    logger.error('주문 내역 조회 오류:', { error: err.message, stack: err.stack });
     return error(res, '주문 내역 조회 중 오류가 발생했습니다.');
   } finally {
     if (conn) conn.release();

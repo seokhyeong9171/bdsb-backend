@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const { body } = require('express-validator');
 const validate = require('../middleware/validate');
+const { authenticate } = require('../middleware/auth');
 const authController = require('../controllers/authController');
 
 // 유저 회원가입
@@ -25,5 +26,13 @@ router.post('/login', [
   body('email').isEmail().withMessage('유효한 이메일을 입력하세요.'),
   body('password').notEmpty().withMessage('비밀번호를 입력하세요.'),
 ], validate, authController.login);
+
+// Access Token 갱신
+router.post('/refresh', [
+  body('refreshToken').notEmpty().withMessage('Refresh token을 입력하세요.'),
+], validate, authController.refresh);
+
+// 로그아웃
+router.post('/logout', authenticate, authController.logout);
 
 module.exports = router;

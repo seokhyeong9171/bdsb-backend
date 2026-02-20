@@ -1,5 +1,6 @@
 const pool = require('../config/db');
 const { success, error } = require('../utils/response');
+const logger = require('../utils/logger');
 
 // 메뉴 조회 (가게별)
 exports.getMenus = async (req, res) => {
@@ -12,7 +13,7 @@ exports.getMenus = async (req, res) => {
     );
     return success(res, menus);
   } catch (err) {
-    console.error('메뉴 조회 오류:', err);
+    logger.error('메뉴 조회 오류:', { error: err.message, stack: err.stack });
     return error(res, '메뉴 조회 중 오류가 발생했습니다.');
   } finally {
     if (conn) conn.release();
@@ -39,7 +40,7 @@ exports.createMenu = async (req, res) => {
 
     return success(res, { id: Number(result.insertId) }, '메뉴가 등록되었습니다.', 201);
   } catch (err) {
-    console.error('메뉴 등록 오류:', err);
+    logger.error('메뉴 등록 오류:', { error: err.message, stack: err.stack });
     return error(res, '메뉴 등록 중 오류가 발생했습니다.');
   } finally {
     if (conn) conn.release();
@@ -67,7 +68,7 @@ exports.updateMenu = async (req, res) => {
 
     return success(res, null, '메뉴가 수정되었습니다.');
   } catch (err) {
-    console.error('메뉴 수정 오류:', err);
+    logger.error('메뉴 수정 오류:', { error: err.message, stack: err.stack });
     return error(res, '메뉴 수정 중 오류가 발생했습니다.');
   } finally {
     if (conn) conn.release();
@@ -90,7 +91,7 @@ exports.deleteMenu = async (req, res) => {
     await conn.query('UPDATE menus SET is_available = 0 WHERE id = ?', [req.params.id]);
     return success(res, null, '메뉴가 삭제되었습니다.');
   } catch (err) {
-    console.error('메뉴 삭제 오류:', err);
+    logger.error('메뉴 삭제 오류:', { error: err.message, stack: err.stack });
     return error(res, '메뉴 삭제 중 오류가 발생했습니다.');
   } finally {
     if (conn) conn.release();

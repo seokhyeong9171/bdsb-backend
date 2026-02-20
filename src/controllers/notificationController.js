@@ -1,5 +1,6 @@
 const pool = require('../config/db');
 const { success, error } = require('../utils/response');
+const logger = require('../utils/logger');
 
 // 알림 목록 조회
 exports.getNotifications = async (req, res) => {
@@ -21,7 +22,7 @@ exports.getNotifications = async (req, res) => {
 
     return success(res, { notifications, unreadCount: unreadCount?.count || 0 });
   } catch (err) {
-    console.error('알림 조회 오류:', err);
+    logger.error('알림 조회 오류:', { error: err.message, stack: err.stack });
     return error(res, '알림 조회 중 오류가 발생했습니다.');
   } finally {
     if (conn) conn.release();
@@ -39,7 +40,7 @@ exports.markAsRead = async (req, res) => {
     );
     return success(res, null, '알림을 읽었습니다.');
   } catch (err) {
-    console.error('알림 읽음 처리 오류:', err);
+    logger.error('알림 읽음 처리 오류:', { error: err.message, stack: err.stack });
     return error(res, '알림 읽음 처리 중 오류가 발생했습니다.');
   } finally {
     if (conn) conn.release();
@@ -57,7 +58,7 @@ exports.markAllAsRead = async (req, res) => {
     );
     return success(res, null, '모든 알림을 읽었습니다.');
   } catch (err) {
-    console.error('전체 읽음 처리 오류:', err);
+    logger.error('전체 읽음 처리 오류:', { error: err.message, stack: err.stack });
     return error(res, '전체 읽음 처리 중 오류가 발생했습니다.');
   } finally {
     if (conn) conn.release();

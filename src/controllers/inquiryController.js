@@ -1,5 +1,6 @@
 const pool = require('../config/db');
 const { success, error } = require('../utils/response');
+const logger = require('../utils/logger');
 
 // 문의 등록
 exports.createInquiry = async (req, res) => {
@@ -15,7 +16,7 @@ exports.createInquiry = async (req, res) => {
 
     return success(res, { id: Number(result.insertId) }, '문의가 등록되었습니다.', 201);
   } catch (err) {
-    console.error('문의 등록 오류:', err);
+    logger.error('문의 등록 오류:', { error: err.message, stack: err.stack });
     return error(res, '문의 등록 중 오류가 발생했습니다.');
   } finally {
     if (conn) conn.release();
@@ -33,7 +34,7 @@ exports.getMyInquiries = async (req, res) => {
     );
     return success(res, inquiries);
   } catch (err) {
-    console.error('문의 목록 조회 오류:', err);
+    logger.error('문의 목록 조회 오류:', { error: err.message, stack: err.stack });
     return error(res, '문의 목록 조회 중 오류가 발생했습니다.');
   } finally {
     if (conn) conn.release();
@@ -58,7 +59,7 @@ exports.getInquiry = async (req, res) => {
 
     return success(res, inquiry);
   } catch (err) {
-    console.error('문의 상세 조회 오류:', err);
+    logger.error('문의 상세 조회 오류:', { error: err.message, stack: err.stack });
     return error(res, '문의 상세 조회 중 오류가 발생했습니다.');
   } finally {
     if (conn) conn.release();
