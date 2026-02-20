@@ -1,26 +1,22 @@
 const cron = require('node-cron');
-const pool = require('../config/db');
+const { Op } = require('sequelize');
+const { Meeting } = require('../models');
 const logger = require('../utils/logger');
 
 // 매 분 실행: deadline이 지난 recruiting 모임을 closed로 변경
 function startMeetingScheduler() {
   cron.schedule('* * * * *', async () => {
-    let conn;
     try {
-      conn = await pool.getConnection();
-      const result = await conn.query(`
-        UPDATE meetings SET status = 'closed'
-        WHERE status = 'recruiting'
-        AND deadline < NOW()
-      `);
+      const [affectedCount] = await Meeting.update(
+        { status: 'closed' },
+        { where: { status: 'recruiting', deadline: { [Op.lt]: new Date() } } }
+      );
 
-      if (result.affectedRows > 0) {
-        logger.info(`모임 마감 자동 처리: ${result.affectedRows}건`);
+      if (affectedCount > 0) {
+        logger.info(`모임 마감 자동 처리: ${affectedCount}건`);
       }
     } catch (err) {
       logger.error('모임 마감 스케줄러 오류:', { error: err.message });
-    } finally {
-      if (conn) conn.release();
     }
   });
 
