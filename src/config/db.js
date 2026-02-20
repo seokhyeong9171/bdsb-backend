@@ -1,25 +1,27 @@
-const mariadb = require('mariadb');
+const mysql = require('mysql2/promise');
 const config = require('./index');
 const logger = require('../utils/logger');
 
-const pool = mariadb.createPool({
+const pool = mysql.createPool({
   host: config.db.host,
   port: config.db.port,
   user: config.db.user,
   password: config.db.password,
   database: config.db.database,
   connectionLimit: 10,
-  acquireTimeout: 30000,
-  bigIntAsNumber: true,
+  waitForConnections: true,
+  ...(config.db.ssl && {
+    ssl: { rejectUnauthorized: false },
+  }),
 });
 
 pool.getConnection()
   .then(conn => {
-    logger.info('MariaDB 연결 성공');
+    logger.info('MySQL(RDS) 연결 성공');
     conn.release();
   })
   .catch(err => {
-    logger.error('MariaDB 연결 실패:', { error: err.message });
+    logger.error('MySQL(RDS) 연결 실패:', { error: err.message });
   });
 
 module.exports = pool;
