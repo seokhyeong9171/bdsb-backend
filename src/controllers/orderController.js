@@ -15,8 +15,9 @@ exports.getStoreOrders = async (req, res) => {
       include: [
         {
           model: Meeting,
+          as: 'meeting',
           attributes: ['title', 'pickupLocation', 'diningType'],
-          include: [{ model: MeetingMember, attributes: [] }],
+          include: [{ model: MeetingMember, as: 'members', attributes: [] }],
         },
       ],
       attributes: {
@@ -40,10 +41,10 @@ exports.approveOrder = async (req, res) => {
     const { orderId } = req.params;
 
     const order = await Order.findByPk(orderId, {
-      include: [{ model: Store, attributes: ['ownerId'] }],
+      include: [{ model: Store, as: 'store', attributes: ['ownerId'] }],
     });
     if (!order) return error(res, '주문을 찾을 수 없습니다.', 404);
-    if (order.Store.ownerId !== req.user.id) return error(res, '권한이 없습니다.', 403);
+    if (order.store.ownerId !== req.user.id) return error(res, '권한이 없습니다.', 403);
 
     await order.update({ status: 'approved' });
     await Meeting.update({ status: 'cooking' }, { where: { id: order.meetingId } });
@@ -70,11 +71,11 @@ exports.rejectOrder = async (req, res) => {
     const { orderId } = req.params;
 
     const order = await Order.findByPk(orderId, {
-      include: [{ model: Store, attributes: ['ownerId'] }],
+      include: [{ model: Store, as: 'store', attributes: ['ownerId'] }],
       transaction: t,
     });
     if (!order) { await t.rollback(); return error(res, '주문을 찾을 수 없습니다.', 404); }
-    if (order.Store.ownerId !== req.user.id) { await t.rollback(); return error(res, '권한이 없습니다.', 403); }
+    if (order.store.ownerId !== req.user.id) { await t.rollback(); return error(res, '권한이 없습니다.', 403); }
 
     await order.update({ status: 'rejected' }, { transaction: t });
     await Meeting.update({ status: 'cancelled' }, { where: { id: order.meetingId }, transaction: t });
@@ -146,10 +147,10 @@ exports.completeCoking = async (req, res) => {
     const { orderId } = req.params;
 
     const order = await Order.findByPk(orderId, {
-      include: [{ model: Store, attributes: ['ownerId'] }],
+      include: [{ model: Store, as: 'store', attributes: ['ownerId'] }],
     });
     if (!order) return error(res, '주문을 찾을 수 없습니다.', 404);
-    if (order.Store.ownerId !== req.user.id) return error(res, '권한이 없습니다.', 403);
+    if (order.store.ownerId !== req.user.id) return error(res, '권한이 없습니다.', 403);
 
     await order.update({ status: 'cooked' });
     await Meeting.update({ status: 'delivering' }, { where: { id: order.meetingId } });
@@ -193,10 +194,10 @@ exports.notifyDelay = async (req, res) => {
     const { reason } = req.body;
 
     const order = await Order.findByPk(orderId, {
-      include: [{ model: Store, attributes: ['ownerId'] }],
+      include: [{ model: Store, as: 'store', attributes: ['ownerId'] }],
     });
     if (!order) return error(res, '주문을 찾을 수 없습니다.', 404);
-    if (order.Store.ownerId !== req.user.id) return error(res, '권한이 없습니다.', 403);
+    if (order.store.ownerId !== req.user.id) return error(res, '권한이 없습니다.', 403);
 
     await order.update({ delayReason: reason });
 
@@ -231,8 +232,8 @@ exports.getAvailableDeliveries = async (req, res) => {
     const orders = await Order.findAll({
       where: { status: 'cooked', riderId: null },
       include: [
-        { model: Store, attributes: ['name', 'address'] },
-        { model: Meeting, attributes: ['pickupLocation', 'meetingLocation'] },
+        { model: Store, as: 'store', attributes: ['name', 'address'] },
+        { model: Meeting, as: 'meeting', attributes: ['pickupLocation', 'meetingLocation'] },
       ],
       order: [['createdAt', 'ASC']],
     });

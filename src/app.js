@@ -183,19 +183,27 @@ function emitToUser(userId, event, data) {
   }
 }
 
-// ── 스케줄러 시작 ──
-startMeetingScheduler();
-
-// ── 서버 시작 ──
+// ── DB 동기화 및 서버 시작 ──
 const PORT = config.port;
-server.listen(PORT, () => {
-  logger.info(`
+
+sequelize.sync().then(() => {
+  logger.info('데이터베이스 동기화 완료');
+
+  // 스케줄러 시작
+  startMeetingScheduler();
+
+  server.listen(PORT, () => {
+    logger.info(`
   ================================
     밥드실분 API 서버
     포트: ${PORT}
     환경: ${config.nodeEnv}
   ================================
-  `);
+    `);
+  });
+}).catch((err) => {
+  logger.error('데이터베이스 동기화 실패:', { error: err.message });
+  process.exit(1);
 });
 
 module.exports = { app, server, io, emitToMeetingRoom, emitToUser };

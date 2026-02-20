@@ -16,7 +16,7 @@ exports.getProfile = async (req, res) => {
     // 완료 모임 수
     const completedMeetings = await MeetingMember.count({
       where: { userId: req.user.id },
-      include: [{ model: Meeting, where: { status: 'completed' }, attributes: [] }],
+      include: [{ model: Meeting, as: 'meeting', where: { status: 'completed' }, attributes: [] }],
     });
 
     // 평가 뱃지 집계
@@ -48,7 +48,7 @@ exports.getUserInfo = async (req, res) => {
 
     const completedMeetings = await MeetingMember.count({
       where: { userId: req.params.id },
-      include: [{ model: Meeting, where: { status: 'completed' }, attributes: [] }],
+      include: [{ model: Meeting, as: 'meeting', where: { status: 'completed' }, attributes: [] }],
     });
 
     const badges = await Evaluation.findAll({
@@ -107,7 +107,7 @@ exports.deleteAccount = async (req, res) => {
     // 진행 중인 모임 확인
     const activeMeetingCount = await MeetingMember.count({
       where: { userId: req.user.id },
-      include: [{ model: Meeting, where: { status: { [Op.notIn]: ['completed', 'cancelled'] } }, attributes: [] }],
+      include: [{ model: Meeting, as: 'meeting', where: { status: { [Op.notIn]: ['completed', 'cancelled'] } }, attributes: [] }],
     });
     if (activeMeetingCount > 0) {
       return error(res, '진행 중인 모임이 있어 탈퇴할 수 없습니다.', 400);
@@ -137,29 +137,31 @@ exports.getOrderHistory = async (req, res) => {
       where: { userId: req.user.id },
       include: [{
         model: Meeting,
+        as: 'meeting',
         attributes: ['title', 'diningType'],
         include: [{
           model: Order,
+          as: 'order',
           attributes: ['id', 'status', 'totalAmount', 'deliveryFee', 'createdAt'],
-          include: [{ model: Store, attributes: ['name', 'thumbnail'] }],
+          include: [{ model: Store, as: 'store', attributes: ['name', 'thumbnail'] }],
         }],
       }],
-      order: [[Meeting, Order, 'createdAt', 'DESC']],
+      order: [[{ model: Meeting, as: 'meeting' }, { model: Order, as: 'order' }, 'createdAt', 'DESC']],
       limit,
       offset,
     });
 
     // 평탄화된 응답 생성
     const orders = payments.map(p => ({
-      id: p.Meeting?.Order?.id,
-      status: p.Meeting?.Order?.status,
-      totalAmount: p.Meeting?.Order?.totalAmount,
-      deliveryFee: p.Meeting?.Order?.deliveryFee,
-      createdAt: p.Meeting?.Order?.createdAt,
-      storeName: p.Meeting?.Order?.Store?.name,
-      storeThumbnail: p.Meeting?.Order?.Store?.thumbnail,
-      meetingTitle: p.Meeting?.title,
-      diningType: p.Meeting?.diningType,
+      id: p.meeting?.order?.id,
+      status: p.meeting?.order?.status,
+      totalAmount: p.meeting?.order?.totalAmount,
+      deliveryFee: p.meeting?.order?.deliveryFee,
+      createdAt: p.meeting?.order?.createdAt,
+      storeName: p.meeting?.order?.store?.name,
+      storeThumbnail: p.meeting?.order?.store?.thumbnail,
+      meetingTitle: p.meeting?.title,
+      diningType: p.meeting?.diningType,
     }));
 
     return success(res, orders);
