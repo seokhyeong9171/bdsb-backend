@@ -1,58 +1,58 @@
-const pool = require('../config/db');
+const { sequelize, Order, Store, Meeting, MeetingMember, Payment, User, PointHistory, Notification, OrderItem, Menu } = require('../models');
 const { success, error } = require('../utils/response');
 const logger = require('../utils/logger');
 
 // 사업자: 주문 목록 조회
 exports.getStoreOrders = async (req, res) => {
-  let conn;
   try {
-    conn = await pool.getConnection();
     const { storeId } = req.params;
 
-    const [store] = await conn.query('SELECT owner_id FROM stores WHERE id = ?', [storeId]);
-    if (!store || store.owner_id !== req.user.id) return error(res, '권한이 없습니다.', 403);
+    const store = await Store.findByPk(storeId, { attributes: ['ownerId'] });
+    if (!store || store.ownerId !== req.user.id) return error(res, '권한이 없습니다.', 403);
 
-    const orders = await conn.query(
-      `SELECT o.*, m.title as meeting_title, m.pickup_location, m.dining_type,
-              (SELECT COUNT(*) FROM meeting_members WHERE meeting_id = m.id) as member_count
-       FROM orders o
-       JOIN meetings m ON o.meeting_id = m.id
-       WHERE o.store_id = ?
-       ORDER BY o.created_at DESC`,
-      [storeId]
-    );
+    const orders = await Order.findAll({
+      where: { storeId },
+      include: [
+        {
+          model: Meeting,
+          attributes: ['title', 'pickupLocation', 'diningType'],
+          include: [{ model: MeetingMember, attributes: [] }],
+        },
+      ],
+      attributes: {
+        include: [
+          [sequelize.literal('(SELECT COUNT(*) FROM meeting_members WHERE meeting_id = `Order`.`meeting_id`)'), 'memberCount'],
+        ],
+      },
+      order: [['createdAt', 'DESC']],
+    });
 
     return success(res, orders);
   } catch (err) {
     logger.error('주문 목록 조회 오류:', { error: err.message });
     return error(res, '주문 목록 조회 중 오류가 발생했습니다.');
-  } finally {
-    if (conn) conn.release();
   }
 };
 
 // 사업자: 주문 승인
 exports.approveOrder = async (req, res) => {
-  let conn;
   try {
-    conn = await pool.getConnection();
     const { orderId } = req.params;
 
-    const [order] = await conn.query(
-      `SELECT o.*, s.owner_id FROM orders o JOIN stores s ON o.store_id = s.id WHERE o.id = ?`,
-      [orderId]
-    );
+    const order = await Order.findByPk(orderId, {
+      include: [{ model: Store, attributes: ['ownerId'] }],
+    });
     if (!order) return error(res, '주문을 찾을 수 없습니다.', 404);
-    if (order.owner_id !== req.user.id) return error(res, '권한이 없습니다.', 403);
+    if (order.Store.ownerId !== req.user.id) return error(res, '권한이 없습니다.', 403);
 
-    await conn.query('UPDATE orders SET status = "approved" WHERE id = ?', [orderId]);
-    await conn.query('UPDATE meetings SET status = "cooking" WHERE id = ?', [order.meeting_id]);
+    await order.update({ status: 'approved' });
+    await Meeting.update({ status: 'cooking' }, { where: { id: order.meetingId } });
 
     // Socket.IO: 주문 승인 실시간 이벤트
     const { emitToMeetingRoom } = require('../app');
-    emitToMeetingRoom(order.meeting_id, 'order:approved', {
+    emitToMeetingRoom(order.meetingId, 'order:approved', {
       orderId,
-      meetingId: order.meeting_id,
+      meetingId: order.meetingId,
       status: 'cooking',
     });
 
@@ -60,182 +60,161 @@ exports.approveOrder = async (req, res) => {
   } catch (err) {
     logger.error('주문 승인 오류:', { error: err.message });
     return error(res, '주문 승인 중 오류가 발생했습니다.');
-  } finally {
-    if (conn) conn.release();
   }
 };
 
 // 사업자: 주문 거절 + 환불 처리
 exports.rejectOrder = async (req, res) => {
-  let conn;
+  const t = await sequelize.transaction();
   try {
-    conn = await pool.getConnection();
-    await conn.beginTransaction();
     const { orderId } = req.params;
 
-    const [order] = await conn.query(
-      `SELECT o.*, s.owner_id FROM orders o JOIN stores s ON o.store_id = s.id WHERE o.id = ?`,
-      [orderId]
-    );
-    if (!order) return error(res, '주문을 찾을 수 없습니다.', 404);
-    if (order.owner_id !== req.user.id) return error(res, '권한이 없습니다.', 403);
+    const order = await Order.findByPk(orderId, {
+      include: [{ model: Store, attributes: ['ownerId'] }],
+      transaction: t,
+    });
+    if (!order) { await t.rollback(); return error(res, '주문을 찾을 수 없습니다.', 404); }
+    if (order.Store.ownerId !== req.user.id) { await t.rollback(); return error(res, '권한이 없습니다.', 403); }
 
-    await conn.query('UPDATE orders SET status = "rejected" WHERE id = ?', [orderId]);
-    await conn.query('UPDATE meetings SET status = "cancelled" WHERE id = ?', [order.meeting_id]);
+    await order.update({ status: 'rejected' }, { transaction: t });
+    await Meeting.update({ status: 'cancelled' }, { where: { id: order.meetingId }, transaction: t });
 
     // 결제 환불 처리: 모임 참여자들의 포인트 환급
-    const payments = await conn.query(
-      'SELECT * FROM payments WHERE meeting_id = ? AND status = ?',
-      [order.meeting_id, 'paid']
-    );
+    const payments = await Payment.findAll({
+      where: { meetingId: order.meetingId, status: 'paid' },
+      transaction: t,
+    });
 
     for (const payment of payments) {
-      // 결제 상태를 환불로 변경
-      await conn.query('UPDATE payments SET status = "refunded" WHERE id = ?', [payment.id]);
+      await payment.update({ status: 'refunded' }, { transaction: t });
 
       // 사용했던 포인트 복구
-      if (payment.points_used > 0) {
-        await conn.query('UPDATE users SET points = points + ? WHERE id = ?', [payment.points_used, payment.user_id]);
-        await conn.query(
-          `INSERT INTO point_history (user_id, amount, type, description, meeting_id)
-           VALUES (?, ?, 'refund', '주문 거절로 인한 포인트 환급', ?)`,
-          [payment.user_id, payment.points_used, order.meeting_id]
-        );
+      if (payment.pointsUsed > 0) {
+        await User.increment('points', { by: payment.pointsUsed, where: { id: payment.userId }, transaction: t });
+        await PointHistory.create({
+          userId: payment.userId, amount: payment.pointsUsed, type: 'refund',
+          description: '주문 거절로 인한 포인트 환급', meetingId: order.meetingId,
+        }, { transaction: t });
       }
 
       // 배달비 분담금 포인트로 환급
-      if (payment.delivery_fee_share > 0) {
-        await conn.query('UPDATE users SET points = points + ? WHERE id = ?', [payment.delivery_fee_share, payment.user_id]);
-        await conn.query(
-          `INSERT INTO point_history (user_id, amount, type, description, meeting_id)
-           VALUES (?, ?, 'refund', '주문 거절로 인한 배달비 환급', ?)`,
-          [payment.user_id, payment.delivery_fee_share, order.meeting_id]
-        );
+      if (payment.deliveryFeeShare > 0) {
+        await User.increment('points', { by: payment.deliveryFeeShare, where: { id: payment.userId }, transaction: t });
+        await PointHistory.create({
+          userId: payment.userId, amount: payment.deliveryFeeShare, type: 'refund',
+          description: '주문 거절로 인한 배달비 환급', meetingId: order.meetingId,
+        }, { transaction: t });
       }
 
       // 모임원에게 알림
-      await conn.query(
-        `INSERT INTO notifications (user_id, type, title, content, reference_id, reference_type)
-         VALUES (?, 'order', '주문 거절', '가게 사정으로 주문이 거절되었습니다. 결제 금액이 포인트로 환급됩니다.', ?, 'order')`,
-        [payment.user_id, orderId]
-      );
+      await Notification.create({
+        userId: payment.userId, type: 'order', title: '주문 거절',
+        content: '가게 사정으로 주문이 거절되었습니다. 결제 금액이 포인트로 환급됩니다.',
+        referenceId: orderId, referenceType: 'order',
+      }, { transaction: t });
 
       // Socket.IO: 실시간 알림
       const { emitToUser } = require('../app');
-      emitToUser(payment.user_id, 'notification:new', {
+      emitToUser(payment.userId, 'notification:new', {
         type: 'order',
         title: '주문 거절',
         content: '가게 사정으로 주문이 거절되었습니다. 결제 금액이 포인트로 환급됩니다.',
       });
     }
 
-    await conn.commit();
+    await t.commit();
 
     // Socket.IO: 주문 거절 실시간 이벤트
     const { emitToMeetingRoom } = require('../app');
-    emitToMeetingRoom(order.meeting_id, 'order:rejected', {
+    emitToMeetingRoom(order.meetingId, 'order:rejected', {
       orderId,
-      meetingId: order.meeting_id,
+      meetingId: order.meetingId,
       status: 'cancelled',
     });
 
     return success(res, null, '주문이 거절되었습니다. 참여자에게 환불이 진행됩니다.');
   } catch (err) {
-    if (conn) await conn.rollback();
+    await t.rollback();
     logger.error('주문 거절 오류:', { error: err.message });
     return error(res, '주문 거절 중 오류가 발생했습니다.');
-  } finally {
-    if (conn) conn.release();
   }
 };
 
 // 사업자: 조리 완료 (→ 라이더 배차 요청)
 exports.completeCoking = async (req, res) => {
-  let conn;
   try {
-    conn = await pool.getConnection();
     const { orderId } = req.params;
 
-    const [order] = await conn.query(
-      `SELECT o.*, s.owner_id FROM orders o JOIN stores s ON o.store_id = s.id WHERE o.id = ?`,
-      [orderId]
-    );
+    const order = await Order.findByPk(orderId, {
+      include: [{ model: Store, attributes: ['ownerId'] }],
+    });
     if (!order) return error(res, '주문을 찾을 수 없습니다.', 404);
-    if (order.owner_id !== req.user.id) return error(res, '권한이 없습니다.', 403);
+    if (order.Store.ownerId !== req.user.id) return error(res, '권한이 없습니다.', 403);
 
-    await conn.query('UPDATE orders SET status = "cooked" WHERE id = ?', [orderId]);
-    await conn.query('UPDATE meetings SET status = "delivering" WHERE id = ?', [order.meeting_id]);
+    await order.update({ status: 'cooked' });
+    await Meeting.update({ status: 'delivering' }, { where: { id: order.meetingId } });
 
     // 모임원에게 알림
-    const members = await conn.query(
-      'SELECT user_id FROM meeting_members WHERE meeting_id = ?',
-      [order.meeting_id]
-    );
-    for (const member of members) {
-      await conn.query(
-        `INSERT INTO notifications (user_id, type, title, content, reference_id, reference_type)
-         VALUES (?, 'order', '조리 완료', '주문하신 음식 조리가 완료되었습니다. 곧 배달이 시작됩니다.', ?, 'order')`,
-        [member.user_id, orderId]
-      );
+    const members = await MeetingMember.findAll({
+      where: { meetingId: order.meetingId },
+      attributes: ['userId'],
+    });
 
-      // Socket.IO: 실시간 알림
-      const { emitToUser } = require('../app');
-      emitToUser(member.user_id, 'notification:new', {
-        type: 'order',
-        title: '조리 완료',
+    const notifications = members.map(m => ({
+      userId: m.userId, type: 'order', title: '조리 완료',
+      content: '주문하신 음식 조리가 완료되었습니다. 곧 배달이 시작됩니다.',
+      referenceId: orderId, referenceType: 'order',
+    }));
+    await Notification.bulkCreate(notifications);
+
+    const { emitToUser, emitToMeetingRoom } = require('../app');
+    for (const member of members) {
+      emitToUser(member.userId, 'notification:new', {
+        type: 'order', title: '조리 완료',
         content: '주문하신 음식 조리가 완료되었습니다.',
       });
     }
 
-    // Socket.IO: 상태 변경 이벤트
-    const { emitToMeetingRoom } = require('../app');
-    emitToMeetingRoom(order.meeting_id, 'meeting:status_changed', {
-      meetingId: order.meeting_id,
-      status: 'delivering',
+    emitToMeetingRoom(order.meetingId, 'meeting:status_changed', {
+      meetingId: order.meetingId, status: 'delivering',
     });
 
     return success(res, null, '조리 완료 처리되었습니다. 라이더 배차를 요청합니다.');
   } catch (err) {
     logger.error('조리 완료 처리 오류:', { error: err.message });
     return error(res, '조리 완료 처리 중 오류가 발생했습니다.');
-  } finally {
-    if (conn) conn.release();
   }
 };
 
 // 사업자: 지연 사유 전달
 exports.notifyDelay = async (req, res) => {
-  let conn;
   try {
-    conn = await pool.getConnection();
     const { orderId } = req.params;
     const { reason } = req.body;
 
-    const [order] = await conn.query(
-      `SELECT o.*, s.owner_id FROM orders o JOIN stores s ON o.store_id = s.id WHERE o.id = ?`,
-      [orderId]
-    );
+    const order = await Order.findByPk(orderId, {
+      include: [{ model: Store, attributes: ['ownerId'] }],
+    });
     if (!order) return error(res, '주문을 찾을 수 없습니다.', 404);
-    if (order.owner_id !== req.user.id) return error(res, '권한이 없습니다.', 403);
+    if (order.Store.ownerId !== req.user.id) return error(res, '권한이 없습니다.', 403);
 
-    await conn.query('UPDATE orders SET delay_reason = ? WHERE id = ?', [reason, orderId]);
+    await order.update({ delayReason: reason });
 
-    const members = await conn.query(
-      'SELECT user_id FROM meeting_members WHERE meeting_id = ?',
-      [order.meeting_id]
-    );
+    const members = await MeetingMember.findAll({
+      where: { meetingId: order.meetingId },
+      attributes: ['userId'],
+    });
+
+    const notifications = members.map(m => ({
+      userId: m.userId, type: 'order', title: '배달 지연 안내',
+      content: reason, referenceId: orderId, referenceType: 'order',
+    }));
+    await Notification.bulkCreate(notifications);
+
+    const { emitToUser } = require('../app');
     for (const member of members) {
-      await conn.query(
-        `INSERT INTO notifications (user_id, type, title, content, reference_id, reference_type)
-         VALUES (?, 'order', '배달 지연 안내', ?, ?, 'order')`,
-        [member.user_id, reason, orderId]
-      );
-
-      const { emitToUser } = require('../app');
-      emitToUser(member.user_id, 'notification:new', {
-        type: 'order',
-        title: '배달 지연 안내',
-        content: reason,
+      emitToUser(member.userId, 'notification:new', {
+        type: 'order', title: '배달 지연 안내', content: reason,
       });
     }
 
@@ -243,101 +222,84 @@ exports.notifyDelay = async (req, res) => {
   } catch (err) {
     logger.error('지연 사유 전달 오류:', { error: err.message });
     return error(res, '지연 사유 전달 중 오류가 발생했습니다.');
-  } finally {
-    if (conn) conn.release();
   }
 };
 
 // 라이더: 배차 대기 주문 목록
 exports.getAvailableDeliveries = async (req, res) => {
-  let conn;
   try {
-    conn = await pool.getConnection();
-    const orders = await conn.query(
-      `SELECT o.*, s.name as store_name, s.address as store_address,
-              m.pickup_location, m.meeting_location
-       FROM orders o
-       JOIN stores s ON o.store_id = s.id
-       JOIN meetings m ON o.meeting_id = m.id
-       WHERE o.status = 'cooked' AND o.rider_id IS NULL
-       ORDER BY o.created_at ASC`
-    );
+    const orders = await Order.findAll({
+      where: { status: 'cooked', riderId: null },
+      include: [
+        { model: Store, attributes: ['name', 'address'] },
+        { model: Meeting, attributes: ['pickupLocation', 'meetingLocation'] },
+      ],
+      order: [['createdAt', 'ASC']],
+    });
     return success(res, orders);
   } catch (err) {
     logger.error('배차 목록 조회 오류:', { error: err.message });
     return error(res, '배차 목록 조회 중 오류가 발생했습니다.');
-  } finally {
-    if (conn) conn.release();
   }
 };
 
 // 라이더: 배차 등록
 exports.acceptDelivery = async (req, res) => {
-  let conn;
   try {
-    conn = await pool.getConnection();
     const { orderId } = req.params;
 
-    const [order] = await conn.query('SELECT * FROM orders WHERE id = ? AND status = "cooked"', [orderId]);
+    const order = await Order.findOne({ where: { id: orderId, status: 'cooked' } });
     if (!order) return error(res, '배차 가능한 주문이 아닙니다.', 404);
-    if (order.rider_id) return error(res, '이미 배차된 주문입니다.', 400);
+    if (order.riderId) return error(res, '이미 배차된 주문입니다.', 400);
 
-    await conn.query('UPDATE orders SET rider_id = ?, status = "delivering" WHERE id = ?', [req.user.id, orderId]);
+    await order.update({ riderId: req.user.id, status: 'delivering' });
 
     return success(res, null, '배차가 등록되었습니다.');
   } catch (err) {
     logger.error('배차 등록 오류:', { error: err.message });
     return error(res, '배차 등록 중 오류가 발생했습니다.');
-  } finally {
-    if (conn) conn.release();
   }
 };
 
 // 라이더: 배달 완료
 exports.completeDelivery = async (req, res) => {
-  let conn;
   try {
-    conn = await pool.getConnection();
     const { orderId } = req.params;
 
-    const [order] = await conn.query('SELECT * FROM orders WHERE id = ? AND rider_id = ?', [orderId, req.user.id]);
+    const order = await Order.findOne({ where: { id: orderId, riderId: req.user.id } });
     if (!order) return error(res, '주문을 찾을 수 없습니다.', 404);
 
-    await conn.query('UPDATE orders SET status = "delivered" WHERE id = ?', [orderId]);
-    await conn.query('UPDATE meetings SET status = "delivered" WHERE id = ?', [order.meeting_id]);
+    await order.update({ status: 'delivered' });
+    await Meeting.update({ status: 'delivered' }, { where: { id: order.meetingId } });
 
     // 모임원에게 알림
-    const members = await conn.query(
-      'SELECT user_id FROM meeting_members WHERE meeting_id = ?',
-      [order.meeting_id]
-    );
-    for (const member of members) {
-      await conn.query(
-        `INSERT INTO notifications (user_id, type, title, content, reference_id, reference_type)
-         VALUES (?, 'delivery', '배달 완료', '주문하신 음식이 도착했습니다!', ?, 'order')`,
-        [member.user_id, orderId]
-      );
+    const members = await MeetingMember.findAll({
+      where: { meetingId: order.meetingId },
+      attributes: ['userId'],
+    });
 
-      const { emitToUser } = require('../app');
-      emitToUser(member.user_id, 'notification:new', {
-        type: 'delivery',
-        title: '배달 완료',
+    const notifications = members.map(m => ({
+      userId: m.userId, type: 'delivery', title: '배달 완료',
+      content: '주문하신 음식이 도착했습니다!',
+      referenceId: orderId, referenceType: 'order',
+    }));
+    await Notification.bulkCreate(notifications);
+
+    const { emitToUser, emitToMeetingRoom } = require('../app');
+    for (const member of members) {
+      emitToUser(member.userId, 'notification:new', {
+        type: 'delivery', title: '배달 완료',
         content: '주문하신 음식이 도착했습니다!',
       });
     }
 
-    // Socket.IO: 배달 완료 이벤트
-    const { emitToMeetingRoom } = require('../app');
-    emitToMeetingRoom(order.meeting_id, 'meeting:status_changed', {
-      meetingId: order.meeting_id,
-      status: 'delivered',
+    emitToMeetingRoom(order.meetingId, 'meeting:status_changed', {
+      meetingId: order.meetingId, status: 'delivered',
     });
 
     return success(res, null, '배달 완료 처리되었습니다.');
   } catch (err) {
     logger.error('배달 완료 처리 오류:', { error: err.message });
     return error(res, '배달 완료 처리 중 오류가 발생했습니다.');
-  } finally {
-    if (conn) conn.release();
   }
 };
