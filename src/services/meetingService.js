@@ -1,52 +1,40 @@
-const pool = require('../config/db');
+const { Op, fn, col, literal } = require('sequelize');
 const logger = require('../utils/logger');
+const { sequelize, Meeting, MeetingMember, ChatRoom, Store, User, Order, OrderItem, Menu, Payment, PointHistory } = require('../models');
 
 /**
  * 모임 생성
  */
 exports.createMeeting = async (userId, data) => {
-  let conn;
+  const t = await sequelize.transaction();
   try {
     const {
       storeId, title, diningType, orderType, pickupLocation, meetingLocation,
       minMembers, maxMembers, deliveryFee, allowEarlyOrder, deadline, description, campus
     } = data;
 
-    conn = await pool.getConnection();
-    await conn.beginTransaction();
-
-    const result = await conn.query(
-      `INSERT INTO meetings (leader_id, store_id, title, dining_type, order_type,
-       pickup_location, meeting_location, min_members, max_members, delivery_fee,
-       allow_early_order, deadline, description, campus)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [userId, storeId, title, diningType || 'individual', orderType || 'instant',
-       pickupLocation, meetingLocation || null, minMembers || 2, maxMembers || 4,
-       deliveryFee || 0, allowEarlyOrder ? 1 : 0, deadline, description || null, campus || null]
-    );
-
-    const meetingId = Number(result.insertId);
+    const meeting = await Meeting.create({
+      leaderId: userId, storeId, title, diningType: diningType || 'individual',
+      orderType: orderType || 'instant', pickupLocation, meetingLocation: meetingLocation || null,
+      minMembers: minMembers || 2, maxMembers: maxMembers || 4, deliveryFee: deliveryFee || 0,
+      allowEarlyOrder: allowEarlyOrder || false, deadline, description: description || null,
+      campus: campus || null,
+    }, { transaction: t });
 
     // 모임장을 멤버로 추가
-    await conn.query(
-      'INSERT INTO meeting_members (meeting_id, user_id, is_leader) VALUES (?, ?, 1)',
-      [meetingId, userId]
-    );
+    await MeetingMember.create({
+      meetingId: meeting.id, userId, isLeader: true,
+    }, { transaction: t });
 
     // 채팅방 자동 생성
-    await conn.query(
-      'INSERT INTO chat_rooms (meeting_id) VALUES (?)',
-      [meetingId]
-    );
+    await ChatRoom.create({ meetingId: meeting.id }, { transaction: t });
 
-    await conn.commit();
-    return { id: meetingId };
+    await t.commit();
+    return { id: meeting.id };
   } catch (err) {
-    if (conn) await conn.rollback();
+    await t.rollback();
     logger.error('모임 생성 서비스 오류:', { error: err.message, userId });
     throw err;
-  } finally {
-    if (conn) conn.release();
   }
 };
 
@@ -54,47 +42,36 @@ exports.createMeeting = async (userId, data) => {
  * 모임 리스트 조회 (모집 중)
  */
 exports.listMeetings = async (filters) => {
-  let conn;
   try {
-    conn = await pool.getConnection();
     const { campus, category, sort = 'latest', page = 1, limit = 20 } = filters;
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
-    let query = `
-      SELECT m.*, s.name as store_name, s.category as store_category, s.thumbnail as store_thumbnail,
-        (SELECT COUNT(*) FROM meeting_members WHERE meeting_id = m.id) as current_members,
-        u.nickname as leader_nickname
-      FROM meetings m
-      JOIN stores s ON m.store_id = s.id
-      JOIN users u ON m.leader_id = u.id
-      WHERE m.status = 'recruiting' AND m.deadline > NOW()
-    `;
-    const params = [];
+    const where = { status: 'recruiting', deadline: { [Op.gt]: new Date() } };
+    if (campus) where.campus = campus;
 
-    if (campus) {
-      query += ' AND m.campus = ?';
-      params.push(campus);
-    }
-    if (category) {
-      query += ' AND s.category = ?';
-      params.push(category);
-    }
+    const storeWhere = {};
+    if (category) storeWhere.category = category;
 
-    if (sort === 'deadline') {
-      query += ' ORDER BY m.deadline ASC';
-    } else {
-      query += ' ORDER BY m.created_at DESC';
-    }
+    const order = sort === 'deadline' ? [['deadline', 'ASC']] : [['createdAt', 'DESC']];
 
-    query += ' LIMIT ? OFFSET ?';
-    params.push(parseInt(limit), offset);
+    const meetings = await Meeting.findAll({
+      where,
+      include: [
+        { model: Store, attributes: ['name', 'category', 'thumbnail'], where: Object.keys(storeWhere).length > 0 ? storeWhere : undefined },
+        { model: User, as: 'leader', attributes: ['nickname'] },
+      ],
+      attributes: {
+        include: [[literal('(SELECT COUNT(*) FROM meeting_members WHERE meeting_id = `Meeting`.`id`)'), 'currentMembers']],
+      },
+      order,
+      limit: parseInt(limit),
+      offset,
+    });
 
-    return await conn.query(query, params);
+    return meetings;
   } catch (err) {
     logger.error('모임 리스트 조회 서비스 오류:', { error: err.message });
     throw err;
-  } finally {
-    if (conn) conn.release();
   }
 };
 
@@ -102,45 +79,36 @@ exports.listMeetings = async (filters) => {
  * 모임 상세 조회
  */
 exports.getMeeting = async (meetingId) => {
-  let conn;
   try {
-    conn = await pool.getConnection();
-
-    const [meeting] = await conn.query(
-      `SELECT m.*, s.name as store_name, s.category as store_category, s.min_order_amount,
-              u.nickname as leader_nickname
-       FROM meetings m
-       JOIN stores s ON m.store_id = s.id
-       JOIN users u ON m.leader_id = u.id
-       WHERE m.id = ?`,
-      [meetingId]
-    );
+    const meeting = await Meeting.findByPk(meetingId, {
+      include: [
+        { model: Store, attributes: ['name', 'category', 'minOrderAmount'] },
+        { model: User, as: 'leader', attributes: ['nickname'] },
+      ],
+    });
     if (!meeting) return null;
 
-    const members = await conn.query(
-      `SELECT mm.*, u.nickname, u.profile_image
-       FROM meeting_members mm
-       JOIN users u ON mm.user_id = u.id
-       WHERE mm.meeting_id = ?`,
-      [meetingId]
-    );
+    const members = await MeetingMember.findAll({
+      where: { meetingId },
+      include: [{ model: User, attributes: ['nickname', 'profileImage'] }],
+    });
 
-    const orderItems = await conn.query(
-      `SELECT oi.*, mn.name as menu_name, u.nickname as orderer_nickname
-       FROM order_items oi
-       JOIN orders o ON oi.order_id = o.id
-       JOIN menus mn ON oi.menu_id = mn.id
-       JOIN users u ON oi.user_id = u.id
-       WHERE o.meeting_id = ?`,
-      [meetingId]
-    );
+    const order = await Order.findOne({ where: { meetingId } });
+    let orderItems = [];
+    if (order) {
+      orderItems = await OrderItem.findAll({
+        where: { orderId: order.id },
+        include: [
+          { model: Menu, attributes: ['name'] },
+          { model: User, attributes: ['nickname'] },
+        ],
+      });
+    }
 
-    return { ...meeting, members, orderItems };
+    return { ...meeting.toJSON(), members, orderItems };
   } catch (err) {
     logger.error('모임 상세 조회 서비스 오류:', { error: err.message, meetingId });
     throw err;
-  } finally {
-    if (conn) conn.release();
   }
 };
 
@@ -148,95 +116,76 @@ exports.getMeeting = async (meetingId) => {
  * 모임 참여 (메뉴 선택 + 결제)
  */
 exports.joinMeeting = async (meetingId, userId, menuItems, pointsUsed = 0) => {
-  let conn;
+  const t = await sequelize.transaction();
   try {
-    conn = await pool.getConnection();
-    await conn.beginTransaction();
-
-    const [meeting] = await conn.query(
-      `SELECT m.*, (SELECT COUNT(*) FROM meeting_members WHERE meeting_id = m.id) as current_members
-       FROM meetings m WHERE m.id = ?`,
-      [meetingId]
-    );
+    const meeting = await Meeting.findByPk(meetingId, { transaction: t });
+    const currentMembers = await MeetingMember.count({ where: { meetingId }, transaction: t });
 
     if (!meeting) throw { status: 404, message: '모임을 찾을 수 없습니다.' };
     if (meeting.status !== 'recruiting') throw { status: 400, message: '모집 중인 모임이 아닙니다.' };
-    if (meeting.current_members >= meeting.max_members) throw { status: 400, message: '최대 인원에 도달했습니다.' };
+    if (currentMembers >= meeting.maxMembers) throw { status: 400, message: '최대 인원에 도달했습니다.' };
     if (new Date(meeting.deadline) < new Date()) throw { status: 400, message: '모집 기한이 지났습니다.' };
 
     // 이미 참여 중인지 확인
-    const [alreadyJoined] = await conn.query(
-      'SELECT id FROM meeting_members WHERE meeting_id = ? AND user_id = ?',
-      [meetingId, userId]
-    );
+    const alreadyJoined = await MeetingMember.findOne({
+      where: { meetingId, userId }, transaction: t,
+    });
     if (alreadyJoined) throw { status: 400, message: '이미 참여 중인 모임입니다.' };
 
     // 멤버 추가
-    await conn.query(
-      'INSERT INTO meeting_members (meeting_id, user_id) VALUES (?, ?)',
-      [meetingId, userId]
-    );
+    await MeetingMember.create({ meetingId, userId }, { transaction: t });
 
     // 주문 생성 또는 기존 주문에 추가
-    let [order] = await conn.query('SELECT id FROM orders WHERE meeting_id = ?', [meetingId]);
-    if (!order) {
-      const orderResult = await conn.query(
-        'INSERT INTO orders (meeting_id, store_id, delivery_fee) VALUES (?, ?, ?)',
-        [meetingId, meeting.store_id, meeting.delivery_fee]
-      );
-      order = { id: Number(orderResult.insertId) };
-    }
+    const [order] = await Order.findOrCreate({
+      where: { meetingId },
+      defaults: { meetingId, storeId: meeting.storeId, deliveryFee: meeting.deliveryFee },
+      transaction: t,
+    });
 
     // 메뉴 항목 추가
     let totalMenuPrice = 0;
     if (menuItems && menuItems.length > 0) {
       for (const item of menuItems) {
-        const [menu] = await conn.query('SELECT price FROM menus WHERE id = ?', [item.menuId]);
+        const menu = await Menu.findByPk(item.menuId, { attributes: ['price'], transaction: t });
         if (!menu) continue;
         const itemPrice = menu.price * (item.quantity || 1);
         totalMenuPrice += itemPrice;
 
-        await conn.query(
-          'INSERT INTO order_items (order_id, user_id, menu_id, quantity, price, is_shared) VALUES (?, ?, ?, ?, ?, ?)',
-          [order.id, userId, item.menuId, item.quantity || 1, menu.price, item.isShared ? 1 : 0]
-        );
+        await OrderItem.create({
+          orderId: order.id, userId, menuId: item.menuId,
+          quantity: item.quantity || 1, price: menu.price, isShared: item.isShared || false,
+        }, { transaction: t });
       }
     }
 
     // 주문 총액 업데이트
-    await conn.query(
-      'UPDATE orders SET total_amount = total_amount + ? WHERE id = ?',
-      [totalMenuPrice, order.id]
-    );
+    await order.increment('totalAmount', { by: totalMenuPrice, transaction: t });
 
     // 결제 기록 생성 (배달비 = 전체 배달비 / 최소 인원)
-    const deliveryFeeShare = Math.ceil(meeting.delivery_fee / meeting.min_members);
+    const deliveryFeeShare = Math.ceil(meeting.deliveryFee / meeting.minMembers);
     const paymentAmount = totalMenuPrice + deliveryFeeShare - pointsUsed;
 
-    await conn.query(
-      `INSERT INTO payments (user_id, meeting_id, amount, delivery_fee_share, points_used, status)
-       VALUES (?, ?, ?, ?, ?, 'paid')`,
-      [userId, meetingId, paymentAmount, deliveryFeeShare, pointsUsed]
-    );
+    await Payment.create({
+      userId, meetingId, amount: paymentAmount,
+      deliveryFeeShare, pointsUsed, status: 'paid',
+    }, { transaction: t });
 
     // 포인트 차감
     if (pointsUsed > 0) {
-      await conn.query('UPDATE users SET points = points - ? WHERE id = ?', [pointsUsed, userId]);
-      await conn.query(
-        `INSERT INTO point_history (user_id, amount, type, description, meeting_id) VALUES (?, ?, 'use', '모임 참여 시 포인트 사용', ?)`,
-        [userId, -pointsUsed, meetingId]
-      );
+      await User.decrement('points', { by: pointsUsed, where: { id: userId }, transaction: t });
+      await PointHistory.create({
+        userId, amount: -pointsUsed, type: 'use',
+        description: '모임 참여 시 포인트 사용', meetingId,
+      }, { transaction: t });
     }
 
-    await conn.commit();
-    return { meetingId, newMemberCount: meeting.current_members + 1 };
+    await t.commit();
+    return { meetingId, newMemberCount: currentMembers + 1 };
   } catch (err) {
-    if (conn) await conn.rollback();
+    await t.rollback();
     if (err.status) throw err;
     logger.error('모임 참여 서비스 오류:', { error: err.message, meetingId, userId });
     throw err;
-  } finally {
-    if (conn) conn.release();
   }
 };
 
@@ -244,34 +193,24 @@ exports.joinMeeting = async (meetingId, userId, menuItems, pointsUsed = 0) => {
  * 메뉴 취소
  */
 exports.cancelMenuItem = async (orderItemId, userId) => {
-  let conn;
   try {
-    conn = await pool.getConnection();
+    const item = await OrderItem.findByPk(orderItemId, {
+      include: [{ model: Order, attributes: ['id', 'meetingId'] }],
+    });
+    if (!item || item.userId !== userId) throw { status: 404, message: '주문 항목을 찾을 수 없습니다.' };
 
-    const [item] = await conn.query(
-      `SELECT oi.*, o.meeting_id FROM order_items oi
-       JOIN orders o ON oi.order_id = o.id
-       WHERE oi.id = ? AND oi.user_id = ?`,
-      [orderItemId, userId]
-    );
-    if (!item) throw { status: 404, message: '주문 항목을 찾을 수 없습니다.' };
-
-    const [meeting] = await conn.query('SELECT status FROM meetings WHERE id = ?', [item.meeting_id]);
+    const meeting = await Meeting.findByPk(item.Order.meetingId, { attributes: ['status'] });
     if (meeting.status !== 'recruiting') throw { status: 400, message: '모집 중인 모임에서만 취소할 수 있습니다.' };
 
-    await conn.query('DELETE FROM order_items WHERE id = ?', [orderItemId]);
-    await conn.query(
-      'UPDATE orders SET total_amount = total_amount - ? WHERE id = ?',
-      [item.price * item.quantity, item.order_id]
-    );
+    const refundAmount = item.price * item.quantity;
+    await item.destroy();
+    await Order.decrement('totalAmount', { by: refundAmount, where: { id: item.Order.id } });
 
     return true;
   } catch (err) {
     if (err.status) throw err;
     logger.error('메뉴 취소 서비스 오류:', { error: err.message });
     throw err;
-  } finally {
-    if (conn) conn.release();
   }
 };
 
@@ -279,52 +218,46 @@ exports.cancelMenuItem = async (orderItemId, userId) => {
  * 주문 진행 (모임장)
  */
 exports.processOrder = async (meetingId, userId) => {
-  let conn;
+  const t = await sequelize.transaction();
   try {
-    conn = await pool.getConnection();
-    await conn.beginTransaction();
-
-    const [meeting] = await conn.query(
-      `SELECT m.*, (SELECT COUNT(*) FROM meeting_members WHERE meeting_id = m.id) as current_members,
-              s.min_order_amount
-       FROM meetings m JOIN stores s ON m.store_id = s.id WHERE m.id = ?`,
-      [meetingId]
-    );
+    const meeting = await Meeting.findByPk(meetingId, {
+      include: [{ model: Store, attributes: ['minOrderAmount'] }],
+      transaction: t,
+    });
+    const currentMembers = await MeetingMember.count({ where: { meetingId }, transaction: t });
 
     if (!meeting) throw { status: 404, message: '모임을 찾을 수 없습니다.' };
-    if (meeting.leader_id !== userId) throw { status: 403, message: '모임장만 주문을 진행할 수 있습니다.' };
+    if (meeting.leaderId !== userId) throw { status: 403, message: '모임장만 주문을 진행할 수 있습니다.' };
     if (meeting.status !== 'recruiting') throw { status: 400, message: '모집 중인 모임만 주문할 수 있습니다.' };
 
     // 최소 인원 확인
-    if (meeting.current_members < meeting.min_members) {
-      await conn.query('UPDATE meetings SET status = "cancelled" WHERE id = ?', [meetingId]);
-      await conn.query('UPDATE orders SET status = "cancelled" WHERE meeting_id = ?', [meetingId]);
-      await conn.commit();
+    if (currentMembers < meeting.minMembers) {
+      await Meeting.update({ status: 'cancelled' }, { where: { id: meetingId }, transaction: t });
+      await Order.update({ status: 'cancelled' }, { where: { meetingId }, transaction: t });
+      await t.commit();
       throw { status: 400, message: '최소 인원이 채워지지 않아 모임이 취소되었습니다.', cancelled: true };
     }
 
     // 최소 주문 금액 확인
-    const [order] = await conn.query('SELECT * FROM orders WHERE meeting_id = ?', [meetingId]);
-    if (order && order.total_amount < meeting.min_order_amount) {
-      await conn.query('UPDATE meetings SET status = "cancelled" WHERE id = ?', [meetingId]);
-      await conn.query('UPDATE orders SET status = "cancelled" WHERE meeting_id = ?', [meetingId]);
-      await conn.commit();
+    const order = await Order.findOne({ where: { meetingId }, transaction: t });
+    if (order && order.totalAmount < meeting.Store.minOrderAmount) {
+      await Meeting.update({ status: 'cancelled' }, { where: { id: meetingId }, transaction: t });
+      await Order.update({ status: 'cancelled' }, { where: { meetingId }, transaction: t });
+      await t.commit();
       throw { status: 400, message: '최소 주문 금액이 채워지지 않아 모임이 취소되었습니다.', cancelled: true };
     }
 
     // 주문 진행
-    await conn.query('UPDATE meetings SET status = "ordered" WHERE id = ?', [meetingId]);
-    await conn.query('UPDATE orders SET status = "pending" WHERE meeting_id = ?', [meetingId]);
+    await Meeting.update({ status: 'ordered' }, { where: { id: meetingId }, transaction: t });
+    await Order.update({ status: 'pending' }, { where: { meetingId }, transaction: t });
 
-    await conn.commit();
+    await t.commit();
     return { status: 'ordered' };
   } catch (err) {
-    if (!err.cancelled && conn) await conn.rollback();
+    if (!err.cancelled) await t.rollback();
     if (err.status) throw err;
     logger.error('주문 진행 서비스 오류:', { error: err.message, meetingId });
     throw err;
-  } finally {
-    if (conn) conn.release();
   }
 };
 
@@ -332,51 +265,42 @@ exports.processOrder = async (meetingId, userId) => {
  * 모임 완료 (배달 완료 후 차액 포인트 환급)
  */
 exports.completeMeeting = async (meetingId) => {
-  let conn;
+  const t = await sequelize.transaction();
   try {
-    conn = await pool.getConnection();
-    await conn.beginTransaction();
-
-    const [meeting] = await conn.query(
-      `SELECT m.*, (SELECT COUNT(*) FROM meeting_members WHERE meeting_id = m.id) as current_members
-       FROM meetings m WHERE m.id = ?`,
-      [meetingId]
-    );
-
+    const meeting = await Meeting.findByPk(meetingId, { transaction: t });
     if (!meeting) throw { status: 404, message: '모임을 찾을 수 없습니다.' };
 
+    const currentMembers = await MeetingMember.count({ where: { meetingId }, transaction: t });
+
     // 실제 인당 배달비 계산 (실제 인원 기준)
-    const actualDeliveryFeePerPerson = Math.ceil(meeting.delivery_fee / meeting.current_members);
-    const initialDeliveryFeePerPerson = Math.ceil(meeting.delivery_fee / meeting.min_members);
+    const actualDeliveryFeePerPerson = Math.ceil(meeting.deliveryFee / currentMembers);
+    const initialDeliveryFeePerPerson = Math.ceil(meeting.deliveryFee / meeting.minMembers);
     const refundPerPerson = initialDeliveryFeePerPerson - actualDeliveryFeePerPerson;
 
     if (refundPerPerson > 0) {
-      const members = await conn.query(
-        'SELECT user_id FROM meeting_members WHERE meeting_id = ?',
-        [meetingId]
-      );
+      const members = await MeetingMember.findAll({
+        where: { meetingId }, attributes: ['userId'], transaction: t,
+      });
 
       for (const member of members) {
-        await conn.query('UPDATE users SET points = points + ? WHERE id = ?', [refundPerPerson, member.user_id]);
-        await conn.query(
-          `INSERT INTO point_history (user_id, amount, type, description, meeting_id) VALUES (?, ?, 'refund', '배달비 차액 환급', ?)`,
-          [member.user_id, refundPerPerson, meetingId]
-        );
+        await User.increment('points', { by: refundPerPerson, where: { id: member.userId }, transaction: t });
+        await PointHistory.create({
+          userId: member.userId, amount: refundPerPerson, type: 'refund',
+          description: '배달비 차액 환급', meetingId,
+        }, { transaction: t });
       }
     }
 
-    await conn.query('UPDATE meetings SET status = "completed" WHERE id = ?', [meetingId]);
-    await conn.query('UPDATE orders SET status = "completed" WHERE meeting_id = ?', [meetingId]);
+    await Meeting.update({ status: 'completed' }, { where: { id: meetingId }, transaction: t });
+    await Order.update({ status: 'completed' }, { where: { meetingId }, transaction: t });
 
-    await conn.commit();
+    await t.commit();
     return { refundPerPerson };
   } catch (err) {
-    if (conn) await conn.rollback();
+    await t.rollback();
     if (err.status) throw err;
     logger.error('모임 완료 서비스 오류:', { error: err.message, meetingId });
     throw err;
-  } finally {
-    if (conn) conn.release();
   }
 };
 
