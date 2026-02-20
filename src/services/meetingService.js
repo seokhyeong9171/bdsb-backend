@@ -39,14 +39,23 @@ exports.createMeeting = async (userId, data) => {
 };
 
 /**
- * 모임 리스트 조회 (모집 중)
+ * 모임 리스트 조회
  */
 exports.listMeetings = async (filters) => {
   try {
-    const { campus, category, sort = 'latest', page = 1, limit = 20 } = filters;
+    const { campus, category, sort = 'latest', status, page = 1, limit = 20 } = filters;
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
-    const where = { status: 'recruiting', deadline: { [Op.gt]: new Date() } };
+    const where = {};
+
+    // status 필터: 미지정 시 모집중만, 'all'이면 전체, 그 외 해당 상태
+    if (!status || status === '') {
+      where.status = 'recruiting';
+      where.deadline = { [Op.gt]: new Date() };
+    } else if (status !== 'all') {
+      where.status = status;
+    }
+
     if (campus) where.campus = campus;
 
     const storeWhere = {};
@@ -57,7 +66,7 @@ exports.listMeetings = async (filters) => {
     const meetings = await Meeting.findAll({
       where,
       include: [
-        { model: Store, attributes: ['name', 'category', 'thumbnail'], where: Object.keys(storeWhere).length > 0 ? storeWhere : undefined },
+        { model: Store, as: 'store', attributes: ['name', 'category', 'thumbnail'], where: Object.keys(storeWhere).length > 0 ? storeWhere : undefined },
         { model: User, as: 'leader', attributes: ['nickname'] },
       ],
       attributes: {
@@ -68,7 +77,33 @@ exports.listMeetings = async (filters) => {
       offset,
     });
 
-    return meetings;
+    return meetings.map((m) => {
+      const json = m.toJSON();
+      return {
+        id: json.id,
+        leader_id: json.leaderId,
+        store_id: json.storeId,
+        title: json.title,
+        dining_type: json.diningType,
+        order_type: json.orderType,
+        pickup_location: json.pickupLocation,
+        meeting_location: json.meetingLocation,
+        min_members: json.minMembers,
+        max_members: json.maxMembers,
+        delivery_fee: json.deliveryFee,
+        allow_early_order: json.allowEarlyOrder,
+        deadline: json.deadline,
+        description: json.description,
+        status: json.status,
+        campus: json.campus,
+        created_at: json.createdAt,
+        store_name: json.store?.name || null,
+        store_category: json.store?.category || null,
+        store_thumbnail: json.store?.thumbnail || null,
+        current_members: Number(json.currentMembers) || 0,
+        leader_nickname: json.leader?.nickname || null,
+      };
+    });
   } catch (err) {
     logger.error('모임 리스트 조회 서비스 오류:', { error: err.message });
     throw err;
@@ -82,15 +117,17 @@ exports.getMeeting = async (meetingId) => {
   try {
     const meeting = await Meeting.findByPk(meetingId, {
       include: [
-        { model: Store, attributes: ['name', 'category', 'minOrderAmount'] },
+        { model: Store, as: 'store', attributes: ['name', 'category', 'minOrderAmount'] },
         { model: User, as: 'leader', attributes: ['nickname'] },
       ],
     });
     if (!meeting) return null;
 
+    const memberCount = await MeetingMember.count({ where: { meetingId } });
+
     const members = await MeetingMember.findAll({
       where: { meetingId },
-      include: [{ model: User, attributes: ['nickname', 'profileImage'] }],
+      include: [{ model: User, as: 'user', attributes: ['nickname', 'profileImage'] }],
     });
 
     const order = await Order.findOne({ where: { meetingId } });
@@ -99,13 +136,63 @@ exports.getMeeting = async (meetingId) => {
       orderItems = await OrderItem.findAll({
         where: { orderId: order.id },
         include: [
-          { model: Menu, attributes: ['name'] },
-          { model: User, attributes: ['nickname'] },
+          { model: Menu, as: 'menu', attributes: ['name'] },
+          { model: User, as: 'user', attributes: ['nickname'] },
         ],
       });
     }
 
-    return { ...meeting.toJSON(), members, orderItems };
+    const json = meeting.toJSON();
+    return {
+      id: json.id,
+      leader_id: json.leaderId,
+      store_id: json.storeId,
+      title: json.title,
+      dining_type: json.diningType,
+      order_type: json.orderType,
+      pickup_location: json.pickupLocation,
+      meeting_location: json.meetingLocation,
+      min_members: json.minMembers,
+      max_members: json.maxMembers,
+      delivery_fee: json.deliveryFee,
+      allow_early_order: json.allowEarlyOrder,
+      deadline: json.deadline,
+      description: json.description,
+      status: json.status,
+      campus: json.campus,
+      created_at: json.createdAt,
+      store_name: json.store?.name || null,
+      store_category: json.store?.category || null,
+      min_order_amount: json.store?.minOrderAmount || 0,
+      current_members: memberCount,
+      leader_nickname: json.leader?.nickname || null,
+      members: members.map((m) => {
+        const mj = m.toJSON();
+        return {
+          id: mj.id,
+          meeting_id: mj.meetingId,
+          user_id: mj.userId,
+          is_leader: mj.isLeader,
+          joined_at: mj.joinedAt,
+          nickname: mj.user?.nickname || null,
+          profile_image: mj.user?.profileImage || null,
+        };
+      }),
+      orderItems: orderItems.map((item) => {
+        const ij = item.toJSON();
+        return {
+          id: ij.id,
+          order_id: ij.orderId,
+          user_id: ij.userId,
+          menu_id: ij.menuId,
+          quantity: ij.quantity,
+          price: ij.price,
+          is_shared: ij.isShared,
+          menu_name: ij.menu?.name || null,
+          orderer_nickname: ij.user?.nickname || null,
+        };
+      }),
+    };
   } catch (err) {
     logger.error('모임 상세 조회 서비스 오류:', { error: err.message, meetingId });
     throw err;
@@ -195,16 +282,16 @@ exports.joinMeeting = async (meetingId, userId, menuItems, pointsUsed = 0) => {
 exports.cancelMenuItem = async (orderItemId, userId) => {
   try {
     const item = await OrderItem.findByPk(orderItemId, {
-      include: [{ model: Order, attributes: ['id', 'meetingId'] }],
+      include: [{ model: Order, as: 'order', attributes: ['id', 'meetingId'] }],
     });
     if (!item || item.userId !== userId) throw { status: 404, message: '주문 항목을 찾을 수 없습니다.' };
 
-    const meeting = await Meeting.findByPk(item.Order.meetingId, { attributes: ['status'] });
+    const meeting = await Meeting.findByPk(item.order.meetingId, { attributes: ['status'] });
     if (meeting.status !== 'recruiting') throw { status: 400, message: '모집 중인 모임에서만 취소할 수 있습니다.' };
 
     const refundAmount = item.price * item.quantity;
     await item.destroy();
-    await Order.decrement('totalAmount', { by: refundAmount, where: { id: item.Order.id } });
+    await Order.decrement('totalAmount', { by: refundAmount, where: { id: item.order.id } });
 
     return true;
   } catch (err) {
@@ -221,7 +308,7 @@ exports.processOrder = async (meetingId, userId) => {
   const t = await sequelize.transaction();
   try {
     const meeting = await Meeting.findByPk(meetingId, {
-      include: [{ model: Store, attributes: ['minOrderAmount'] }],
+      include: [{ model: Store, as: 'store', attributes: ['minOrderAmount'] }],
       transaction: t,
     });
     const currentMembers = await MeetingMember.count({ where: { meetingId }, transaction: t });
@@ -240,7 +327,7 @@ exports.processOrder = async (meetingId, userId) => {
 
     // 최소 주문 금액 확인
     const order = await Order.findOne({ where: { meetingId }, transaction: t });
-    if (order && order.totalAmount < meeting.Store.minOrderAmount) {
+    if (order && order.totalAmount < meeting.store.minOrderAmount) {
       await Meeting.update({ status: 'cancelled' }, { where: { id: meetingId }, transaction: t });
       await Order.update({ status: 'cancelled' }, { where: { meetingId }, transaction: t });
       await t.commit();
