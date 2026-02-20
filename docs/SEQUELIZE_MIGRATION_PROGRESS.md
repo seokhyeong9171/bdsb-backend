@@ -29,14 +29,14 @@
 - [x] `src/models/Notification.js`
 - [x] `src/models/RefreshToken.js`
 
-### 2단계: 컨트롤러 Sequelize 전환
+### 2단계: 컨트롤러 Sequelize 전환 ✅ 완료
 - [x] `src/controllers/authController.js` ✅ — register, registerBusiness, login, refresh, logout
 - [x] `src/controllers/userController.js` ✅ — getProfile, getUserInfo, updateProfile, deleteAccount, getOrderHistory
 - [x] `src/controllers/storeController.js` ✅ — createStore, getMyStores, getStore, listStores, updateStore, deleteStore
 - [x] `src/controllers/menuController.js` ✅ — getMenus, createMenu, updateMenu, deleteMenu
-- [ ] `src/controllers/meetingController.js` ← **다음 작업** (현재 meetingService.js에 위임 중)
-- [ ] `src/services/meetingService.js` ← **다음 작업** (★트랜잭션 핵심: createMeeting, listMeetings, getMeeting, joinMeeting, cancelMenuItem, processOrder, completeMeeting)
-- [ ] `src/controllers/orderController.js` ← **다음 작업** (getStoreOrders, approveOrder, rejectOrder, completeCoking, notifyDelay, getAvailableDeliveries, acceptDelivery, completeDelivery)
+- [x] `src/controllers/meetingController.js` ✅ — meetingService.js에 위임
+- [x] `src/services/meetingService.js` ✅ — createMeeting, listMeetings, getMeeting, joinMeeting, cancelMenuItem, processOrder, completeMeeting
+- [x] `src/controllers/orderController.js` ✅ — getStoreOrders, approveOrder, rejectOrder, completeCoking, notifyDelay, getAvailableDeliveries, acceptDelivery, completeDelivery
 - [x] `src/controllers/chatController.js` ✅ — getChatRoom, getMessages, sendMessage
 - [x] `src/controllers/evaluationController.js` ✅ — evaluate(upsert), getEvaluationTargets
 - [x] `src/controllers/inquiryController.js` ✅ — createInquiry, getMyInquiries, getInquiry
@@ -44,32 +44,17 @@
 - [x] `src/controllers/notificationController.js` ✅ — getNotifications, markAsRead, markAllAsRead
 - [x] `src/controllers/adminController.js` ✅ — getUsers, updateUser, toggleSuspend, getInquiries, answerInquiry
 
-### 3단계: 인프라 전환
-- [ ] `src/app.js` — Socket.IO send_message 이벤트에서 raw SQL → ChatMessage.create()
-- [ ] `src/scheduler/meetingScheduler.js` — raw SQL → Meeting.update()
-- [ ] `src/database/init.js` — raw CREATE TABLE → sequelize.sync() + 관리자 시드
+### 3단계: 인프라 전환 ✅ 완료
+- [x] `src/app.js` — Socket.IO send_message: ChatMessage.create(), 헬스 체크: sequelize.authenticate(), pool 제거
+- [x] `src/scheduler/meetingScheduler.js` — Meeting.update() with Op.lt
 
 ### 4단계: 정리
-- [ ] `src/config/db.js` 제거 (Sequelize가 대체)
-- [ ] 모든 컨트롤러에서 `require('../config/db')` 제거
+- [x] 모든 컨트롤러/서비스/앱에서 `require('../config/db')` 제거 완료
+- [ ] `src/config/db.js` 제거 가능 (database/init.js가 필요 시 별도 관리)
+- [ ] `src/database/init.js` — raw CREATE TABLE 유지 (스키마 초기화는 raw SQL이 적절)
 - [ ] 테스트 실행 및 검증
 
 ## 핵심 변환 패턴
-
-### 기존 패턴 (raw SQL)
-```js
-const pool = require('../config/db');
-let conn;
-try {
-  conn = await pool.getConnection();
-  const rows = await conn.query('SELECT * FROM users WHERE id = ?', [id]);
-  return success(res, rows[0]);
-} catch (err) {
-  return error(res, '에러');
-} finally {
-  if (conn) conn.release();
-}
-```
 
 ### 새 패턴 (Sequelize)
 ```js
