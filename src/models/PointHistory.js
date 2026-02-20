@@ -1,7 +1,17 @@
-exports.create = async (conn, data) => {
-  const { userId, amount, type, description, meetingId } = data;
-  await conn.query(
-    'INSERT INTO point_history (user_id, amount, type, description, meeting_id) VALUES (?, ?, ?, ?, ?)',
-    [userId, amount, type, description, meetingId || null]
-  );
+const { DataTypes } = require('sequelize');
+
+module.exports = (sequelize) => {
+  const PointHistory = sequelize.define('PointHistory', {
+    id: { type: DataTypes.INTEGER, autoIncrement: true, primaryKey: true },
+    userId: { type: DataTypes.INTEGER, allowNull: false },
+    amount: { type: DataTypes.INTEGER, allowNull: false },
+    type: { type: DataTypes.ENUM('earn', 'use', 'refund'), allowNull: false },
+    description: { type: DataTypes.STRING(255) },
+    meetingId: { type: DataTypes.INTEGER },
+  }, {
+    tableName: 'point_history',
+    timestamps: true,
+    updatedAt: false,
+  });
+  return PointHistory;
 };

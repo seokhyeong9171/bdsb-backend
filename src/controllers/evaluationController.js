@@ -1,20 +1,16 @@
-const pool = require('../config/db');
+const { Op } = require('sequelize');
 const { success, error } = require('../utils/response');
 const logger = require('../utils/logger');
+const { Meeting, MeetingMember, Evaluation, User } = require('../models');
 
 // 평가하기
 exports.evaluate = async (req, res) => {
-  let conn;
   try {
     const { meetingId } = req.params;
     const { targetId, badge } = req.body;
-    conn = await pool.getConnection();
 
     // 모임 완료 확인
-    const [meeting] = await conn.query(
-      'SELECT status FROM meetings WHERE id = ?',
-      [meetingId]
-    );
+    const meeting = await Meeting.findByPk(meetingId, { attributes: ['status'] });
     if (!meeting || meeting.status !== 'completed') {
       return error(res, '완료된 모임만 평가할 수 있습니다.', 400);
     }
@@ -25,51 +21,51 @@ exports.evaluate = async (req, res) => {
     }
 
     // 둘 다 모임 멤버인지 확인
-    const members = await conn.query(
-      'SELECT user_id FROM meeting_members WHERE meeting_id = ? AND user_id IN (?, ?)',
-      [meetingId, req.user.id, targetId]
-    );
-    if (members.length < 2) {
+    const memberCount = await MeetingMember.count({
+      where: { meetingId, userId: { [Op.in]: [req.user.id, targetId] } },
+    });
+    if (memberCount < 2) {
       return error(res, '해당 모임의 참여자만 평가할 수 있습니다.', 403);
     }
 
-    await conn.query(
-      `INSERT INTO evaluations (meeting_id, evaluator_id, target_id, badge)
-       VALUES (?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE badge = ?`,
-      [meetingId, req.user.id, targetId, badge, badge]
-    );
+    await Evaluation.upsert({
+      meetingId, evaluatorId: req.user.id, targetId, badge,
+    });
 
     return success(res, null, '평가가 등록되었습니다.');
   } catch (err) {
     logger.error('평가 오류:', { error: err.message, stack: err.stack });
     return error(res, '평가 중 오류가 발생했습니다.');
-  } finally {
-    if (conn) conn.release();
   }
 };
 
 // 평가 대상 목록 (모임원 리스트)
 exports.getEvaluationTargets = async (req, res) => {
-  let conn;
   try {
     const { meetingId } = req.params;
-    conn = await pool.getConnection();
 
-    const members = await conn.query(
-      `SELECT u.id, u.nickname, u.profile_image,
-              (SELECT badge FROM evaluations WHERE meeting_id = ? AND evaluator_id = ? AND target_id = u.id) as my_evaluation
-       FROM meeting_members mm
-       JOIN users u ON mm.user_id = u.id
-       WHERE mm.meeting_id = ? AND mm.user_id != ?`,
-      [meetingId, req.user.id, meetingId, req.user.id]
-    );
+    const members = await MeetingMember.findAll({
+      where: { meetingId, userId: { [Op.ne]: req.user.id } },
+      include: [{ model: User, attributes: ['id', 'nickname', 'profileImage'] }],
+    });
 
-    return success(res, members);
+    // 각 멤버에 대해 내가 이미 평가한 badge 조회
+    const targets = await Promise.all(members.map(async (m) => {
+      const evaluation = await Evaluation.findOne({
+        where: { meetingId, evaluatorId: req.user.id, targetId: m.User.id },
+        attributes: ['badge'],
+      });
+      return {
+        id: m.User.id,
+        nickname: m.User.nickname,
+        profileImage: m.User.profileImage,
+        myEvaluation: evaluation ? evaluation.badge : null,
+      };
+    }));
+
+    return success(res, targets);
   } catch (err) {
     logger.error('평가 대상 조회 오류:', { error: err.message, stack: err.stack });
     return error(res, '평가 대상 조회 중 오류가 발생했습니다.');
-  } finally {
-    if (conn) conn.release();
   }
 };
