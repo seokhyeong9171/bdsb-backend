@@ -151,17 +151,19 @@ exports.getOrderHistory = async (req, res) => {
       offset,
     });
 
-    // 평탄화된 응답 생성
+    // 평탄화된 응답 생성 (snake_case)
     const orders = payments.map(p => ({
       id: p.meeting?.order?.id,
+      meeting_id: p.meetingId,
+      store_id: p.meeting?.order?.storeId,
       status: p.meeting?.order?.status,
-      totalAmount: p.meeting?.order?.totalAmount,
-      deliveryFee: p.meeting?.order?.deliveryFee,
-      createdAt: p.meeting?.order?.createdAt,
-      storeName: p.meeting?.order?.store?.name,
-      storeThumbnail: p.meeting?.order?.store?.thumbnail,
-      meetingTitle: p.meeting?.title,
-      diningType: p.meeting?.diningType,
+      total_amount: p.meeting?.order?.totalAmount,
+      delivery_fee: p.meeting?.order?.deliveryFee,
+      created_at: p.meeting?.order?.createdAt,
+      store_name: p.meeting?.order?.store?.name,
+      store_thumbnail: p.meeting?.order?.store?.thumbnail,
+      meeting_title: p.meeting?.title,
+      dining_type: p.meeting?.diningType,
     }));
 
     return success(res, orders);

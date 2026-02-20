@@ -55,7 +55,39 @@ exports.getStore = async (req, res) => {
       where: { targetType: 'store', targetId: req.params.id },
     });
 
-    return success(res, { ...store.toJSON(), menus, images });
+    const j = store.toJSON();
+    const storeData = {
+      id: j.id,
+      owner_id: j.ownerId,
+      name: j.name,
+      description: j.description,
+      category: j.category,
+      phone: j.phone,
+      address: j.address,
+      open_time: j.openTime,
+      close_time: j.closeTime,
+      closed_days: j.closedDays,
+      delivery_fee: j.deliveryFee,
+      min_order_amount: j.minOrderAmount,
+      thumbnail: j.thumbnail,
+      is_active: j.isActive,
+      created_at: j.createdAt,
+      menus: menus.map((m) => {
+        const mj = m.toJSON();
+        return {
+          id: mj.id,
+          store_id: mj.storeId,
+          name: mj.name,
+          price: mj.price,
+          description: mj.description,
+          image: mj.image,
+          is_available: mj.isAvailable,
+        };
+      }),
+      images,
+    };
+
+    return success(res, storeData);
   } catch (err) {
     logger.error('가게 상세 조회 오류:', { error: err.message, stack: err.stack });
     return error(res, '가게 상세 조회 중 오류가 발생했습니다.');
@@ -72,11 +104,31 @@ exports.listStores = async (req, res) => {
     if (category) where.category = category;
     if (search) where.name = { [Op.like]: `%${search}%` };
 
-    const stores = await Store.findAll({
+    const rows = await Store.findAll({
       where,
       order: [['name', 'ASC']],
       limit: parseInt(limit),
       offset,
+    });
+    const stores = rows.map((s) => {
+      const j = s.toJSON();
+      return {
+        id: j.id,
+        owner_id: j.ownerId,
+        name: j.name,
+        description: j.description,
+        category: j.category,
+        phone: j.phone,
+        address: j.address,
+        open_time: j.openTime,
+        close_time: j.closeTime,
+        closed_days: j.closedDays,
+        delivery_fee: j.deliveryFee,
+        min_order_amount: j.minOrderAmount,
+        thumbnail: j.thumbnail,
+        is_active: j.isActive,
+        created_at: j.createdAt,
+      };
     });
     return success(res, stores);
   } catch (err) {

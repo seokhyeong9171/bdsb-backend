@@ -21,10 +21,20 @@ exports.createInquiry = async (req, res) => {
 // 내 문의 목록 조회
 exports.getMyInquiries = async (req, res) => {
   try {
-    const inquiries = await Inquiry.findAll({
+    const rows = await Inquiry.findAll({
       where: { userId: req.user.id },
       attributes: ['id', 'title', 'status', 'createdAt', 'answeredAt'],
       order: [['createdAt', 'DESC']],
+    });
+    const inquiries = rows.map((i) => {
+      const j = i.toJSON();
+      return {
+        id: j.id,
+        title: j.title,
+        status: j.status,
+        created_at: j.createdAt,
+        answered_at: j.answeredAt,
+      };
     });
     return success(res, inquiries);
   } catch (err) {
@@ -44,7 +54,17 @@ exports.getInquiry = async (req, res) => {
       return error(res, '권한이 없습니다.', 403);
     }
 
-    return success(res, inquiry);
+    const j = inquiry.toJSON();
+    return success(res, {
+      id: j.id,
+      user_id: j.userId,
+      title: j.title,
+      content: j.content,
+      status: j.status,
+      answer: j.answer,
+      answered_at: j.answeredAt,
+      created_at: j.createdAt,
+    });
   } catch (err) {
     logger.error('문의 상세 조회 오류:', { error: err.message, stack: err.stack });
     return error(res, '문의 상세 조회 중 오류가 발생했습니다.');
