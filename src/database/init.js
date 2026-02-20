@@ -8,6 +8,7 @@ async function initDatabase() {
     port: config.db.port,
     user: config.db.user,
     password: config.db.password,
+    allowPublicKeyRetrieval: true,
   });
 
   await conn.query(`CREATE DATABASE IF NOT EXISTS \`${config.db.database}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);

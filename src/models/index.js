@@ -7,6 +7,9 @@ const sequelize = new Sequelize(config.db.database, config.db.user, config.db.pa
   port: config.db.port,
   dialect: 'mariadb',
   logging: config.nodeEnv === 'development' ? (msg) => logger.debug(msg) : false,
+  dialectOptions: {
+    allowPublicKeyRetrieval: true,
+  },
   pool: {
     max: 10,
     min: 0,
