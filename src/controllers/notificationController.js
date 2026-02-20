@@ -8,7 +8,7 @@ exports.getNotifications = async (req, res) => {
     const { page = 1, limit = 20 } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
-    const notifications = await Notification.findAll({
+    const rows = await Notification.findAll({
       where: { userId: req.user.id },
       order: [['createdAt', 'DESC']],
       limit: parseInt(limit),
@@ -17,6 +17,21 @@ exports.getNotifications = async (req, res) => {
 
     const unreadCount = await Notification.count({
       where: { userId: req.user.id, isRead: false },
+    });
+
+    const notifications = rows.map((n) => {
+      const j = n.toJSON();
+      return {
+        id: j.id,
+        user_id: j.userId,
+        type: j.type,
+        title: j.title,
+        content: j.content,
+        is_read: j.isRead,
+        reference_id: j.referenceId,
+        reference_type: j.referenceType,
+        created_at: j.createdAt,
+      };
     });
 
     return success(res, { notifications, unreadCount });
