@@ -1,14 +1,17 @@
-const mariadb = require('mariadb');
+const mysql = require('mysql2/promise');
 const config = require('../config');
 
 async function initDatabase() {
   // 먼저 DB 없이 연결하여 데이터베이스 생성
-  const conn = await mariadb.createConnection({
+  const conn = await mysql.createConnection({
     host: config.db.host,
     port: config.db.port,
     user: config.db.user,
     password: config.db.password,
     allowPublicKeyRetrieval: true,
+    ...(config.db.ssl && {
+      ssl: { rejectUnauthorized: false },
+    }),
   });
 
   await conn.query(`CREATE DATABASE IF NOT EXISTS \`${config.db.database}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
