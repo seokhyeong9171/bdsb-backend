@@ -9,6 +9,9 @@ const pool = mysql.createPool({
   password: config.db.password,
   database: config.db.database,
   connectionLimit: 10,
+  acquireTimeout: 30000,
+  bigIntAsNumber: true,
+  allowPublicKeyRetrieval: true,
   waitForConnections: true,
   ...(config.db.ssl && {
     ssl: { rejectUnauthorized: false },

@@ -8,6 +8,7 @@ async function initDatabase() {
     port: config.db.port,
     user: config.db.user,
     password: config.db.password,
+    allowPublicKeyRetrieval: true,
     ...(config.db.ssl && {
       ssl: { rejectUnauthorized: false },
     }),
