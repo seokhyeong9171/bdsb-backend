@@ -1,20 +1,19 @@
-exports.upsert = async (conn, data) => {
-  const { meetingId, evaluatorId, targetId, badge } = data;
-  await conn.query(
-    `INSERT INTO evaluations (meeting_id, evaluator_id, target_id, badge)
-     VALUES (?, ?, ?, ?)
-     ON DUPLICATE KEY UPDATE badge = ?`,
-    [meetingId, evaluatorId, targetId, badge, badge]
-  );
-};
+const { DataTypes } = require('sequelize');
 
-exports.getTargets = async (conn, meetingId, evaluatorId) => {
-  return await conn.query(
-    `SELECT u.id, u.nickname, u.profile_image,
-            (SELECT badge FROM evaluations WHERE meeting_id = ? AND evaluator_id = ? AND target_id = u.id) as my_evaluation
-     FROM meeting_members mm
-     JOIN users u ON mm.user_id = u.id
-     WHERE mm.meeting_id = ? AND mm.user_id != ?`,
-    [meetingId, evaluatorId, meetingId, evaluatorId]
-  );
+module.exports = (sequelize) => {
+  const Evaluation = sequelize.define('Evaluation', {
+    id: { type: DataTypes.INTEGER, autoIncrement: true, primaryKey: true },
+    meetingId: { type: DataTypes.INTEGER, allowNull: false },
+    evaluatorId: { type: DataTypes.INTEGER, allowNull: false },
+    targetId: { type: DataTypes.INTEGER, allowNull: false },
+    badge: { type: DataTypes.ENUM('good', 'normal', 'bad'), allowNull: false },
+  }, {
+    tableName: 'evaluations',
+    timestamps: true,
+    updatedAt: false,
+    indexes: [
+      { unique: true, fields: ['meeting_id', 'evaluator_id', 'target_id'] },
+    ],
+  });
+  return Evaluation;
 };
