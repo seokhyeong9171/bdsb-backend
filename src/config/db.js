@@ -1,5 +1,6 @@
 const mariadb = require('mariadb');
 const config = require('./index');
+const logger = require('../utils/logger');
 
 const pool = mariadb.createPool({
   host: config.db.host,
@@ -14,11 +15,11 @@ const pool = mariadb.createPool({
 
 pool.getConnection()
   .then(conn => {
-    console.log('MariaDB 연결 성공');
+    logger.info('MariaDB 연결 성공');
     conn.release();
   })
   .catch(err => {
-    console.error('MariaDB 연결 실패:', err.message);
+    logger.error('MariaDB 연결 실패:', { error: err.message });
   });
 
 module.exports = pool;

@@ -1,9 +1,34 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 const pool = require('../config/db');
 const config = require('../config');
 const { success, error } = require('../utils/response');
 const { generateNickname } = require('../utils/nickname');
+const logger = require('../utils/logger');
+
+// Refresh Token 생성 및 DB 저장
+async function createRefreshToken(conn, userId) {
+  const token = crypto.randomBytes(40).toString('hex');
+  const expiresAt = new Date();
+  expiresAt.setDate(expiresAt.getDate() + 30); // 30일
+
+  await conn.query(
+    'INSERT INTO refresh_tokens (user_id, token, expires_at) VALUES (?, ?, ?)',
+    [userId, token, expiresAt]
+  );
+
+  return token;
+}
+
+// Access Token 생성
+function createAccessToken(user) {
+  return jwt.sign(
+    { id: user.id, email: user.email, role: user.role, nickname: user.nickname },
+    config.jwt.secret,
+    { expiresIn: config.jwt.expiresIn }
+  );
+}
 
 // 유저 회원가입
 exports.register = async (req, res) => {
@@ -35,15 +60,17 @@ exports.register = async (req, res) => {
       [email, hashedPassword, name, nickname, phone, department || null, address || null, university || null, campus || null]
     );
 
-    const token = jwt.sign(
-      { id: Number(result.insertId), email, role: 'user', nickname },
-      config.jwt.secret,
-      { expiresIn: config.jwt.expiresIn }
-    );
+    const userId = Number(result.insertId);
+    const accessToken = createAccessToken({ id: userId, email, role: 'user', nickname });
+    const refreshToken = await createRefreshToken(conn, userId);
 
-    return success(res, { token, user: { id: Number(result.insertId), email, name, nickname, role: 'user' } }, '회원가입 성공', 201);
+    return success(res, {
+      accessToken,
+      refreshToken,
+      user: { id: userId, email, name, nickname, role: 'user' }
+    }, '회원가입 성공', 201);
   } catch (err) {
-    console.error('회원가입 오류:', err);
+    logger.error('회원가입 오류:', { error: err.message });
     return error(res, '회원가입 중 오류가 발생했습니다.');
   } finally {
     if (conn) conn.release();
@@ -71,15 +98,17 @@ exports.registerBusiness = async (req, res) => {
       [email, hashedPassword, name, nickname, phone, address || null, businessNumber]
     );
 
-    const token = jwt.sign(
-      { id: Number(result.insertId), email, role: 'business', nickname },
-      config.jwt.secret,
-      { expiresIn: config.jwt.expiresIn }
-    );
+    const userId = Number(result.insertId);
+    const accessToken = createAccessToken({ id: userId, email, role: 'business', nickname });
+    const refreshToken = await createRefreshToken(conn, userId);
 
-    return success(res, { token, user: { id: Number(result.insertId), email, name, nickname, role: 'business' } }, '사업자 회원가입 성공', 201);
+    return success(res, {
+      accessToken,
+      refreshToken,
+      user: { id: userId, email, name, nickname, role: 'business' }
+    }, '사업자 회원가입 성공', 201);
   } catch (err) {
-    console.error('사업자 회원가입 오류:', err);
+    logger.error('사업자 회원가입 오류:', { error: err.message });
     return error(res, '회원가입 중 오류가 발생했습니다.');
   } finally {
     if (conn) conn.release();
@@ -107,14 +136,12 @@ exports.login = async (req, res) => {
       return error(res, '이메일 또는 비밀번호가 올바르지 않습니다.', 401);
     }
 
-    const token = jwt.sign(
-      { id: user.id, email: user.email, role: user.role, nickname: user.nickname },
-      config.jwt.secret,
-      { expiresIn: config.jwt.expiresIn }
-    );
+    const accessToken = createAccessToken(user);
+    const refreshToken = await createRefreshToken(conn, user.id);
 
     return success(res, {
-      token,
+      accessToken,
+      refreshToken,
       user: {
         id: user.id,
         email: user.email,
@@ -126,8 +153,87 @@ exports.login = async (req, res) => {
       }
     }, '로그인 성공');
   } catch (err) {
-    console.error('로그인 오류:', err);
+    logger.error('로그인 오류:', { error: err.message, stack: err.stack });
     return error(res, '로그인 중 오류가 발생했습니다.');
+  } finally {
+    if (conn) conn.release();
+  }
+};
+
+// Access Token 갱신
+exports.refresh = async (req, res) => {
+  let conn;
+  try {
+    const { refreshToken } = req.body;
+    if (!refreshToken) {
+      return error(res, 'Refresh token이 필요합니다.', 400);
+    }
+
+    conn = await pool.getConnection();
+
+    // DB에서 refresh token 조회 (유저 정보 JOIN)
+    const [tokenRecord] = await conn.query(
+      `SELECT rt.*, u.id as user_id, u.email, u.role, u.nickname, u.is_active
+       FROM refresh_tokens rt JOIN users u ON rt.user_id = u.id
+       WHERE rt.token = ?`,
+      [refreshToken]
+    );
+
+    if (!tokenRecord) {
+      return error(res, '유효하지 않은 refresh token입니다.', 401);
+    }
+
+    // 만료 확인
+    if (new Date(tokenRecord.expires_at) < new Date()) {
+      await conn.query('DELETE FROM refresh_tokens WHERE token = ?', [refreshToken]);
+      return error(res, 'Refresh token이 만료되었습니다. 다시 로그인하세요.', 401);
+    }
+
+    // 계정 정지 확인
+    if (!tokenRecord.is_active) {
+      await conn.query('DELETE FROM refresh_tokens WHERE user_id = ?', [tokenRecord.user_id]);
+      return error(res, '정지된 계정입니다. 관리자에게 문의하세요.', 403);
+    }
+
+    // Refresh Token Rotation: 기존 삭제 후 새로 발급
+    await conn.query('DELETE FROM refresh_tokens WHERE token = ?', [refreshToken]);
+
+    const newAccessToken = createAccessToken({
+      id: tokenRecord.user_id,
+      email: tokenRecord.email,
+      role: tokenRecord.role,
+      nickname: tokenRecord.nickname,
+    });
+    const newRefreshToken = await createRefreshToken(conn, tokenRecord.user_id);
+
+    return success(res, {
+      accessToken: newAccessToken,
+      refreshToken: newRefreshToken,
+    }, '토큰이 갱신되었습니다.');
+  } catch (err) {
+    logger.error('토큰 갱신 오류:', { error: err.message, stack: err.stack });
+    return error(res, '토큰 갱신 중 오류가 발생했습니다.');
+  } finally {
+    if (conn) conn.release();
+  }
+};
+
+// 로그아웃 (Refresh Token 삭제)
+exports.logout = async (req, res) => {
+  let conn;
+  try {
+    const { refreshToken } = req.body;
+    if (!refreshToken) {
+      return success(res, null, '로그아웃 되었습니다.');
+    }
+
+    conn = await pool.getConnection();
+    await conn.query('DELETE FROM refresh_tokens WHERE token = ?', [refreshToken]);
+
+    return success(res, null, '로그아웃 되었습니다.');
+  } catch (err) {
+    logger.error('로그아웃 오류:', { error: err.message, stack: err.stack });
+    return error(res, '로그아웃 중 오류가 발생했습니다.');
   } finally {
     if (conn) conn.release();
   }

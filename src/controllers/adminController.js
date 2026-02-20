@@ -1,5 +1,6 @@
 const pool = require('../config/db');
 const { success, error } = require('../utils/response');
+const logger = require('../utils/logger');
 
 // 회원 목록 조회
 exports.getUsers = async (req, res) => {
@@ -27,7 +28,7 @@ exports.getUsers = async (req, res) => {
     const users = await conn.query(query, params);
     return success(res, users);
   } catch (err) {
-    console.error('회원 목록 조회 오류:', err);
+    logger.error('회원 목록 조회 오류:', { error: err.message, stack: err.stack });
     return error(res, '회원 목록 조회 중 오류가 발생했습니다.');
   } finally {
     if (conn) conn.release();
@@ -48,7 +49,7 @@ exports.updateUser = async (req, res) => {
 
     return success(res, null, '회원 정보가 수정되었습니다.');
   } catch (err) {
-    console.error('회원 수정 오류:', err);
+    logger.error('회원 수정 오류:', { error: err.message, stack: err.stack });
     return error(res, '회원 수정 중 오류가 발생했습니다.');
   } finally {
     if (conn) conn.release();
@@ -68,7 +69,7 @@ exports.toggleSuspend = async (req, res) => {
 
     return success(res, { isActive: !!newStatus }, newStatus ? '계정이 활성화되었습니다.' : '계정이 정지되었습니다.');
   } catch (err) {
-    console.error('계정 정지 처리 오류:', err);
+    logger.error('계정 정지 처리 오류:', { error: err.message, stack: err.stack });
     return error(res, '계정 정지 처리 중 오류가 발생했습니다.');
   } finally {
     if (conn) conn.release();
@@ -102,7 +103,7 @@ exports.getInquiries = async (req, res) => {
     const inquiries = await conn.query(query, params);
     return success(res, inquiries);
   } catch (err) {
-    console.error('문의 목록 조회 오류:', err);
+    logger.error('문의 목록 조회 오류:', { error: err.message, stack: err.stack });
     return error(res, '문의 목록 조회 중 오류가 발생했습니다.');
   } finally {
     if (conn) conn.release();
@@ -134,7 +135,7 @@ exports.answerInquiry = async (req, res) => {
 
     return success(res, null, '답변이 등록되었습니다.');
   } catch (err) {
-    console.error('답변 등록 오류:', err);
+    logger.error('답변 등록 오류:', { error: err.message, stack: err.stack });
     return error(res, '답변 등록 중 오류가 발생했습니다.');
   } finally {
     if (conn) conn.release();

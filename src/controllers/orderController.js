@@ -1,5 +1,6 @@
 const pool = require('../config/db');
 const { success, error } = require('../utils/response');
+const logger = require('../utils/logger');
 
 // 사업자: 주문 목록 조회
 exports.getStoreOrders = async (req, res) => {
@@ -23,7 +24,7 @@ exports.getStoreOrders = async (req, res) => {
 
     return success(res, orders);
   } catch (err) {
-    console.error('주문 목록 조회 오류:', err);
+    logger.error('주문 목록 조회 오류:', { error: err.message });
     return error(res, '주문 목록 조회 중 오류가 발생했습니다.');
   } finally {
     if (conn) conn.release();
@@ -47,20 +48,29 @@ exports.approveOrder = async (req, res) => {
     await conn.query('UPDATE orders SET status = "approved" WHERE id = ?', [orderId]);
     await conn.query('UPDATE meetings SET status = "cooking" WHERE id = ?', [order.meeting_id]);
 
+    // Socket.IO: 주문 승인 실시간 이벤트
+    const { emitToMeetingRoom } = require('../app');
+    emitToMeetingRoom(order.meeting_id, 'order:approved', {
+      orderId,
+      meetingId: order.meeting_id,
+      status: 'cooking',
+    });
+
     return success(res, null, '주문이 승인되었습니다.');
   } catch (err) {
-    console.error('주문 승인 오류:', err);
+    logger.error('주문 승인 오류:', { error: err.message });
     return error(res, '주문 승인 중 오류가 발생했습니다.');
   } finally {
     if (conn) conn.release();
   }
 };
 
-// 사업자: 주문 거절
+// 사업자: 주문 거절 + 환불 처리
 exports.rejectOrder = async (req, res) => {
   let conn;
   try {
     conn = await pool.getConnection();
+    await conn.beginTransaction();
     const { orderId } = req.params;
 
     const [order] = await conn.query(
@@ -73,11 +83,66 @@ exports.rejectOrder = async (req, res) => {
     await conn.query('UPDATE orders SET status = "rejected" WHERE id = ?', [orderId]);
     await conn.query('UPDATE meetings SET status = "cancelled" WHERE id = ?', [order.meeting_id]);
 
-    // TODO: 결제 환불 처리
+    // 결제 환불 처리: 모임 참여자들의 포인트 환급
+    const payments = await conn.query(
+      'SELECT * FROM payments WHERE meeting_id = ? AND status = ?',
+      [order.meeting_id, 'paid']
+    );
 
-    return success(res, null, '주문이 거절되었습니다.');
+    for (const payment of payments) {
+      // 결제 상태를 환불로 변경
+      await conn.query('UPDATE payments SET status = "refunded" WHERE id = ?', [payment.id]);
+
+      // 사용했던 포인트 복구
+      if (payment.points_used > 0) {
+        await conn.query('UPDATE users SET points = points + ? WHERE id = ?', [payment.points_used, payment.user_id]);
+        await conn.query(
+          `INSERT INTO point_history (user_id, amount, type, description, meeting_id)
+           VALUES (?, ?, 'refund', '주문 거절로 인한 포인트 환급', ?)`,
+          [payment.user_id, payment.points_used, order.meeting_id]
+        );
+      }
+
+      // 배달비 분담금 포인트로 환급
+      if (payment.delivery_fee_share > 0) {
+        await conn.query('UPDATE users SET points = points + ? WHERE id = ?', [payment.delivery_fee_share, payment.user_id]);
+        await conn.query(
+          `INSERT INTO point_history (user_id, amount, type, description, meeting_id)
+           VALUES (?, ?, 'refund', '주문 거절로 인한 배달비 환급', ?)`,
+          [payment.user_id, payment.delivery_fee_share, order.meeting_id]
+        );
+      }
+
+      // 모임원에게 알림
+      await conn.query(
+        `INSERT INTO notifications (user_id, type, title, content, reference_id, reference_type)
+         VALUES (?, 'order', '주문 거절', '가게 사정으로 주문이 거절되었습니다. 결제 금액이 포인트로 환급됩니다.', ?, 'order')`,
+        [payment.user_id, orderId]
+      );
+
+      // Socket.IO: 실시간 알림
+      const { emitToUser } = require('../app');
+      emitToUser(payment.user_id, 'notification:new', {
+        type: 'order',
+        title: '주문 거절',
+        content: '가게 사정으로 주문이 거절되었습니다. 결제 금액이 포인트로 환급됩니다.',
+      });
+    }
+
+    await conn.commit();
+
+    // Socket.IO: 주문 거절 실시간 이벤트
+    const { emitToMeetingRoom } = require('../app');
+    emitToMeetingRoom(order.meeting_id, 'order:rejected', {
+      orderId,
+      meetingId: order.meeting_id,
+      status: 'cancelled',
+    });
+
+    return success(res, null, '주문이 거절되었습니다. 참여자에게 환불이 진행됩니다.');
   } catch (err) {
-    console.error('주문 거절 오류:', err);
+    if (conn) await conn.rollback();
+    logger.error('주문 거절 오류:', { error: err.message });
     return error(res, '주문 거절 중 오류가 발생했습니다.');
   } finally {
     if (conn) conn.release();
@@ -112,11 +177,26 @@ exports.completeCoking = async (req, res) => {
          VALUES (?, 'order', '조리 완료', '주문하신 음식 조리가 완료되었습니다. 곧 배달이 시작됩니다.', ?, 'order')`,
         [member.user_id, orderId]
       );
+
+      // Socket.IO: 실시간 알림
+      const { emitToUser } = require('../app');
+      emitToUser(member.user_id, 'notification:new', {
+        type: 'order',
+        title: '조리 완료',
+        content: '주문하신 음식 조리가 완료되었습니다.',
+      });
     }
+
+    // Socket.IO: 상태 변경 이벤트
+    const { emitToMeetingRoom } = require('../app');
+    emitToMeetingRoom(order.meeting_id, 'meeting:status_changed', {
+      meetingId: order.meeting_id,
+      status: 'delivering',
+    });
 
     return success(res, null, '조리 완료 처리되었습니다. 라이더 배차를 요청합니다.');
   } catch (err) {
-    console.error('조리 완료 처리 오류:', err);
+    logger.error('조리 완료 처리 오류:', { error: err.message });
     return error(res, '조리 완료 처리 중 오류가 발생했습니다.');
   } finally {
     if (conn) conn.release();
@@ -150,11 +230,18 @@ exports.notifyDelay = async (req, res) => {
          VALUES (?, 'order', '배달 지연 안내', ?, ?, 'order')`,
         [member.user_id, reason, orderId]
       );
+
+      const { emitToUser } = require('../app');
+      emitToUser(member.user_id, 'notification:new', {
+        type: 'order',
+        title: '배달 지연 안내',
+        content: reason,
+      });
     }
 
     return success(res, null, '지연 사유가 전달되었습니다.');
   } catch (err) {
-    console.error('지연 사유 전달 오류:', err);
+    logger.error('지연 사유 전달 오류:', { error: err.message });
     return error(res, '지연 사유 전달 중 오류가 발생했습니다.');
   } finally {
     if (conn) conn.release();
@@ -177,7 +264,7 @@ exports.getAvailableDeliveries = async (req, res) => {
     );
     return success(res, orders);
   } catch (err) {
-    console.error('배차 목록 조회 오류:', err);
+    logger.error('배차 목록 조회 오류:', { error: err.message });
     return error(res, '배차 목록 조회 중 오류가 발생했습니다.');
   } finally {
     if (conn) conn.release();
@@ -199,7 +286,7 @@ exports.acceptDelivery = async (req, res) => {
 
     return success(res, null, '배차가 등록되었습니다.');
   } catch (err) {
-    console.error('배차 등록 오류:', err);
+    logger.error('배차 등록 오류:', { error: err.message });
     return error(res, '배차 등록 중 오류가 발생했습니다.');
   } finally {
     if (conn) conn.release();
@@ -230,11 +317,25 @@ exports.completeDelivery = async (req, res) => {
          VALUES (?, 'delivery', '배달 완료', '주문하신 음식이 도착했습니다!', ?, 'order')`,
         [member.user_id, orderId]
       );
+
+      const { emitToUser } = require('../app');
+      emitToUser(member.user_id, 'notification:new', {
+        type: 'delivery',
+        title: '배달 완료',
+        content: '주문하신 음식이 도착했습니다!',
+      });
     }
+
+    // Socket.IO: 배달 완료 이벤트
+    const { emitToMeetingRoom } = require('../app');
+    emitToMeetingRoom(order.meeting_id, 'meeting:status_changed', {
+      meetingId: order.meeting_id,
+      status: 'delivered',
+    });
 
     return success(res, null, '배달 완료 처리되었습니다.');
   } catch (err) {
-    console.error('배달 완료 처리 오류:', err);
+    logger.error('배달 완료 처리 오류:', { error: err.message });
     return error(res, '배달 완료 처리 중 오류가 발생했습니다.');
   } finally {
     if (conn) conn.release();

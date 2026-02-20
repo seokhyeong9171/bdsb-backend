@@ -1,5 +1,6 @@
 const pool = require('../config/db');
 const { success, error } = require('../utils/response');
+const logger = require('../utils/logger');
 
 // 가게 등록
 exports.createStore = async (req, res) => {
@@ -16,7 +17,7 @@ exports.createStore = async (req, res) => {
 
     return success(res, { id: Number(result.insertId) }, '가게가 등록되었습니다.', 201);
   } catch (err) {
-    console.error('가게 등록 오류:', err);
+    logger.error('가게 등록 오류:', { error: err.message, stack: err.stack });
     return error(res, '가게 등록 중 오류가 발생했습니다.');
   } finally {
     if (conn) conn.release();
@@ -34,7 +35,7 @@ exports.getMyStores = async (req, res) => {
     );
     return success(res, stores);
   } catch (err) {
-    console.error('가게 목록 조회 오류:', err);
+    logger.error('가게 목록 조회 오류:', { error: err.message, stack: err.stack });
     return error(res, '가게 목록 조회 중 오류가 발생했습니다.');
   } finally {
     if (conn) conn.release();
@@ -61,7 +62,7 @@ exports.getStore = async (req, res) => {
 
     return success(res, { ...store, menus, images });
   } catch (err) {
-    console.error('가게 상세 조회 오류:', err);
+    logger.error('가게 상세 조회 오류:', { error: err.message, stack: err.stack });
     return error(res, '가게 상세 조회 중 오류가 발생했습니다.');
   } finally {
     if (conn) conn.release();
@@ -94,7 +95,7 @@ exports.listStores = async (req, res) => {
     const stores = await conn.query(query, params);
     return success(res, stores);
   } catch (err) {
-    console.error('가게 목록 조회 오류:', err);
+    logger.error('가게 목록 조회 오류:', { error: err.message, stack: err.stack });
     return error(res, '가게 목록 조회 중 오류가 발생했습니다.');
   } finally {
     if (conn) conn.release();
@@ -124,7 +125,7 @@ exports.updateStore = async (req, res) => {
 
     return success(res, null, '가게 정보가 수정되었습니다.');
   } catch (err) {
-    console.error('가게 수정 오류:', err);
+    logger.error('가게 수정 오류:', { error: err.message, stack: err.stack });
     return error(res, '가게 수정 중 오류가 발생했습니다.');
   } finally {
     if (conn) conn.release();
@@ -160,7 +161,7 @@ exports.deleteStore = async (req, res) => {
     await conn.query('UPDATE stores SET is_active = 0 WHERE id = ?', [req.params.id]);
     return success(res, null, '가게가 삭제되었습니다.');
   } catch (err) {
-    console.error('가게 삭제 오류:', err);
+    logger.error('가게 삭제 오류:', { error: err.message, stack: err.stack });
     return error(res, '가게 삭제 중 오류가 발생했습니다.');
   } finally {
     if (conn) conn.release();

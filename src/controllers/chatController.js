@@ -1,5 +1,6 @@
 const pool = require('../config/db');
 const { success, error } = require('../utils/response');
+const logger = require('../utils/logger');
 
 // 채팅방 조회 (모임별)
 exports.getChatRoom = async (req, res) => {
@@ -23,7 +24,7 @@ exports.getChatRoom = async (req, res) => {
 
     return success(res, room);
   } catch (err) {
-    console.error('채팅방 조회 오류:', err);
+    logger.error('채팅방 조회 오류:', { error: err.message, stack: err.stack });
     return error(res, '채팅방 조회 중 오류가 발생했습니다.');
   } finally {
     if (conn) conn.release();
@@ -51,7 +52,7 @@ exports.getMessages = async (req, res) => {
 
     return success(res, messages);
   } catch (err) {
-    console.error('메시지 조회 오류:', err);
+    logger.error('메시지 조회 오류:', { error: err.message, stack: err.stack });
     return error(res, '메시지 조회 중 오류가 발생했습니다.');
   } finally {
     if (conn) conn.release();
@@ -73,7 +74,7 @@ exports.sendMessage = async (req, res) => {
 
     return success(res, { id: Number(result.insertId) }, '메시지가 전송되었습니다.', 201);
   } catch (err) {
-    console.error('메시지 전송 오류:', err);
+    logger.error('메시지 전송 오류:', { error: err.message, stack: err.stack });
     return error(res, '메시지 전송 중 오류가 발생했습니다.');
   } finally {
     if (conn) conn.release();

@@ -1,5 +1,9 @@
+const fs = require('fs');
+const path = require('path');
 const pool = require('../config/db');
+const config = require('../config');
 const { success, error } = require('../utils/response');
+const logger = require('../utils/logger');
 
 // 이미지 등록
 exports.uploadImage = async (req, res) => {
@@ -18,7 +22,7 @@ exports.uploadImage = async (req, res) => {
 
     return success(res, { id: Number(result.insertId), url }, '이미지가 등록되었습니다.', 201);
   } catch (err) {
-    console.error('이미지 등록 오류:', err);
+    logger.error('이미지 등록 오류:', { error: err.message });
     return error(res, '이미지 등록 중 오류가 발생했습니다.');
   } finally {
     if (conn) conn.release();
@@ -47,7 +51,7 @@ exports.getImages = async (req, res) => {
     const images = await conn.query(query, params);
     return success(res, images);
   } catch (err) {
-    console.error('이미지 조회 오류:', err);
+    logger.error('이미지 조회 오류:', { error: err.message });
     return error(res, '이미지 조회 중 오류가 발생했습니다.');
   } finally {
     if (conn) conn.release();
@@ -82,7 +86,7 @@ exports.setThumbnail = async (req, res) => {
 
     return success(res, null, '대표 이미지가 설정되었습니다.');
   } catch (err) {
-    console.error('대표 이미지 설정 오류:', err);
+    logger.error('대표 이미지 설정 오류:', { error: err.message });
     return error(res, '대표 이미지 설정 중 오류가 발생했습니다.');
   } finally {
     if (conn) conn.release();
@@ -100,11 +104,18 @@ exports.deleteImage = async (req, res) => {
     if (!image) return error(res, '이미지를 찾을 수 없습니다.', 404);
 
     await conn.query('DELETE FROM images WHERE id = ?', [id]);
-    // TODO: 파일 시스템에서도 삭제
+
+    // 파일 시스템에서 실제 파일 삭제
+    const filePath = path.join(__dirname, '..', '..', config.upload.dir, path.basename(image.url));
+    fs.unlink(filePath, (unlinkErr) => {
+      if (unlinkErr && unlinkErr.code !== 'ENOENT') {
+        logger.error('이미지 파일 삭제 실패:', { error: unlinkErr.message, path: filePath });
+      }
+    });
 
     return success(res, null, '이미지가 삭제되었습니다.');
   } catch (err) {
-    console.error('이미지 삭제 오류:', err);
+    logger.error('이미지 삭제 오류:', { error: err.message });
     return error(res, '이미지 삭제 중 오류가 발생했습니다.');
   } finally {
     if (conn) conn.release();

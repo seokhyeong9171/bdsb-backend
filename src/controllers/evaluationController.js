@@ -1,5 +1,6 @@
 const pool = require('../config/db');
 const { success, error } = require('../utils/response');
+const logger = require('../utils/logger');
 
 // 평가하기
 exports.evaluate = async (req, res) => {
@@ -41,7 +42,7 @@ exports.evaluate = async (req, res) => {
 
     return success(res, null, '평가가 등록되었습니다.');
   } catch (err) {
-    console.error('평가 오류:', err);
+    logger.error('평가 오류:', { error: err.message, stack: err.stack });
     return error(res, '평가 중 오류가 발생했습니다.');
   } finally {
     if (conn) conn.release();
@@ -66,7 +67,7 @@ exports.getEvaluationTargets = async (req, res) => {
 
     return success(res, members);
   } catch (err) {
-    console.error('평가 대상 조회 오류:', err);
+    logger.error('평가 대상 조회 오류:', { error: err.message, stack: err.stack });
     return error(res, '평가 대상 조회 중 오류가 발생했습니다.');
   } finally {
     if (conn) conn.release();
