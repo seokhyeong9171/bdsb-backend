@@ -5,7 +5,7 @@ const logger = require('../utils/logger');
 const sequelize = new Sequelize(config.db.database, config.db.user, config.db.password, {
   host: config.db.host,
   port: config.db.port,
-  dialect: 'mysql',
+  dialect: 'mariadb',
   logging: config.nodeEnv === 'development' ? (msg) => logger.debug(msg) : false,
   dialectOptions: {
     allowPublicKeyRetrieval: true,

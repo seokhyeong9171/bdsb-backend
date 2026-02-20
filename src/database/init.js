@@ -1,9 +1,9 @@
-const mysql = require('mysql2/promise');
+const mariadb = require('mariadb');
 const config = require('../config');
 
 async function initDatabase() {
   // 먼저 DB 없이 연결하여 데이터베이스 생성
-  const conn = await mysql.createConnection({
+  const conn = await mariadb.createConnection({
     host: config.db.host,
     port: config.db.port,
     user: config.db.user,
