@@ -19,7 +19,7 @@ const server = http.createServer(app);
 // CORS 허용 origin 목록
 const allowedOrigins = config.corsOrigin
   ? config.corsOrigin.split(',').map((s) => s.trim())
-  : ['*'];
+  : true; // CORS_ORIGIN 미설정 시 모든 origin 허용
 
 // Socket.IO 설정
 const io = new Server(server, {

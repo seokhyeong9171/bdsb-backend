@@ -17,7 +17,7 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ubuntu
           key: ${{ secrets.EC2_SSH_KEY }}
-          envs: DB_HOST,DB_PORT,DB_USER,DB_PASSWORD,DB_NAME,DB_SSL,JWT_SECRET,NODE_ENV
+          envs: DB_HOST,DB_PORT,DB_USER,DB_PASSWORD,DB_NAME,DB_SSL,JWT_SECRET,NODE_ENV,CORS_ORIGIN
           script: |
             cd /home/ubuntu/bdsb-backend
             git fetch origin
@@ -39,6 +39,7 @@ jobs:
             JWT_REFRESH_EXPIRES_IN=30d
             UPLOAD_DIR=uploads
             MAX_FILE_SIZE=5242880
+            CORS_ORIGIN=${{ secrets.CORS_ORIGIN }}
             EOL
 
             npm install --production
