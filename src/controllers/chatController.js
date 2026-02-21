@@ -38,7 +38,16 @@ exports.getMessages = async (req, res) => {
       offset,
     });
 
-    return success(res, messages);
+    const formatted = messages.map((m) => ({
+      id: m.id,
+      room_id: m.roomId,
+      sender_id: m.senderId,
+      nickname: m.sender?.nickname || '',
+      message: m.message,
+      created_at: m.createdAt,
+    }));
+
+    return success(res, formatted);
   } catch (err) {
     logger.error('메시지 조회 오류:', { error: err.message, stack: err.stack });
     return error(res, '메시지 조회 중 오류가 발생했습니다.');
