@@ -3,11 +3,11 @@ const { success, error } = require('../utils/response');
 const logger = require('../utils/logger');
 const { Meeting, MeetingMember, Evaluation, User } = require('../models');
 
-// 평가하기
+// 평가하기 (배열)
 exports.evaluate = async (req, res) => {
   try {
     const { meetingId } = req.params;
-    const { targetId, badge } = req.body;
+    const { evaluations } = req.body;
 
     // 모임 완료 확인
     const meeting = await Meeting.findByPk(meetingId, { attributes: ['status'] });
@@ -15,22 +15,26 @@ exports.evaluate = async (req, res) => {
       return error(res, '완료된 모임만 평가할 수 있습니다.', 400);
     }
 
+    const targetIds = evaluations.map((e) => e.targetId);
+
     // 본인 평가 불가
-    if (req.user.id === parseInt(targetId)) {
+    if (targetIds.includes(req.user.id)) {
       return error(res, '본인은 평가할 수 없습니다.', 400);
     }
 
-    // 둘 다 모임 멤버인지 확인
+    // 모든 대상이 모임 멤버인지 확인
     const memberCount = await MeetingMember.count({
-      where: { meetingId, userId: { [Op.in]: [req.user.id, targetId] } },
+      where: { meetingId, userId: { [Op.in]: [...targetIds, req.user.id] } },
     });
-    if (memberCount < 2) {
+    if (memberCount < targetIds.length + 1) {
       return error(res, '해당 모임의 참여자만 평가할 수 있습니다.', 403);
     }
 
-    await Evaluation.upsert({
-      meetingId, evaluatorId: req.user.id, targetId, badge,
-    });
+    await Promise.all(evaluations.map((e) =>
+      Evaluation.upsert({
+        meetingId, evaluatorId: req.user.id, targetId: e.targetId, badge: e.badge,
+      })
+    ));
 
     return success(res, null, '평가가 등록되었습니다.');
   } catch (err) {
@@ -56,10 +60,10 @@ exports.getEvaluationTargets = async (req, res) => {
         attributes: ['badge'],
       });
       return {
-        id: m.User.id,
+        user_id: m.User.id,
         nickname: m.User.nickname,
-        profileImage: m.User.profileImage,
-        myEvaluation: evaluation ? evaluation.badge : null,
+        profile_image: m.User.profileImage,
+        already_evaluated: !!evaluation,
       };
     }));
 
