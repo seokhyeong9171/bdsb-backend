@@ -50,19 +50,19 @@ exports.getEvaluationTargets = async (req, res) => {
 
     const members = await MeetingMember.findAll({
       where: { meetingId, userId: { [Op.ne]: req.user.id } },
-      include: [{ model: User, attributes: ['id', 'nickname', 'profileImage'] }],
+      include: [{ model: User, as: 'user', attributes: ['id', 'nickname', 'profileImage'] }],
     });
 
     // 각 멤버에 대해 내가 이미 평가한 badge 조회
     const targets = await Promise.all(members.map(async (m) => {
       const evaluation = await Evaluation.findOne({
-        where: { meetingId, evaluatorId: req.user.id, targetId: m.User.id },
+        where: { meetingId, evaluatorId: req.user.id, targetId: m.user.id },
         attributes: ['badge'],
       });
       return {
-        user_id: m.User.id,
-        nickname: m.User.nickname,
-        profile_image: m.User.profileImage,
+        user_id: m.user.id,
+        nickname: m.user.nickname,
+        profile_image: m.user.profileImage,
         already_evaluated: !!evaluation,
       };
     }));
