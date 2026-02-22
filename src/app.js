@@ -23,7 +23,7 @@ const allowedOrigins = config.corsOrigin
 
 // Socket.IO 설정
 const io = new Server(server, {
-  cors: { origin: allowedOrigins, methods: ['GET', 'POST'] },
+  cors: { origin: allowedOrigins, methods: ['GET', 'POST'], credentials: true },
 });
 
 // io 인스턴스를 다른 모듈에서 사용할 수 있도록 app에 저장
