@@ -33,7 +33,7 @@ exports.getMessages = async (req, res) => {
     const messages = await ChatMessage.findAll({
       where: { roomId },
       include: [{ model: User, as: 'sender', attributes: ['nickname', 'profileImage'] }],
-      order: [['createdAt', 'DESC']],
+      order: [['createdAt', 'ASC']],
       limit: parseInt(limit),
       offset,
     });
